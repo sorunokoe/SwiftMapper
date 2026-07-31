@@ -41,7 +41,26 @@ public struct MapperMacro: MemberMacro {
 
             let label = parameter.firstName.text
             guard label != "_" else {
-                context.diagnose(MapperDiagnostic.unlabeledParameter.diagnose(at: parameter))
+                var fixIts: [FixIt] = []
+                if let internalName = parameter.secondName {
+                    let newParameter = parameter.with(
+                        \.firstName,
+                        internalName.trimmed.with(\.leadingTrivia, parameter.firstName.leadingTrivia)
+                    )
+                    fixIts.append(
+                        FixIt(
+                            message: UnlabeledParameterFixIt(newLabel: internalName.text),
+                            changes: [.replace(oldNode: Syntax(parameter), newNode: Syntax(newParameter))]
+                        )
+                    )
+                }
+                context.diagnose(
+                    Diagnostic(
+                        node: Syntax(parameter),
+                        message: MapperDiagnostic.unlabeledParameter,
+                        fixIts: fixIts
+                    )
+                )
                 return []
             }
 
@@ -147,7 +166,7 @@ private enum MapperDiagnostic: String, DiagnosticMessage {
         case .unsupportedParameter:
             return "@Mapper does not support variadic initializer parameters"
         case .unlabeledParameter:
-            return "@Mapper requires every initializer parameter to have a label (no '_' parameters)"
+            return "@Mapper requires every initializer parameter to have an explicit label; use the parameter's internal name as the label instead of '_'"
         case .noFields:
             return "@Mapper requires the initializer to declare at least one parameter"
         }
@@ -161,5 +180,22 @@ private enum MapperDiagnostic: String, DiagnosticMessage {
 
     func diagnose(at node: some SyntaxProtocol) -> Diagnostic {
         Diagnostic(node: Syntax(node), message: self)
+    }
+}
+
+/// The Fix-It offered alongside `MapperDiagnostic.unlabeledParameter`: when
+/// the parameter has an internal name (e.g. `_ profile: String`), the
+/// overwhelmingly likely fix is to promote that internal name to also be
+/// the external label — turning `_ profile: String` into
+/// `profile profile: String`. If a parameter has no internal name either
+/// (`_: String`), no mechanical fix exists, so no Fix-It is offered in that
+/// case (see the call site in `MapperMacro.expansion(of:providingMembersOf:in:)`).
+private struct UnlabeledParameterFixIt: FixItMessage {
+    let newLabel: String
+
+    var message: String { "Use '\(newLabel)' as the parameter's label" }
+
+    var fixItID: MessageID {
+        MessageID(domain: "SwiftMapper", id: "unlabeledParameter.useInternalName")
     }
 }

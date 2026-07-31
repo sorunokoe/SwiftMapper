@@ -146,6 +146,41 @@ final class MapperMacroExpansionTests: XCTestCase {
         )
     }
 
+    func testDiagnosesUnlabeledParameterWithFixIt() {
+        assertMacroExpansion(
+            """
+            @Mapper
+            struct Unlabeled {
+                let value: String
+
+                init(_ value: String) {
+                    self.value = value
+                }
+            }
+            """,
+            expandedSource: """
+            struct Unlabeled {
+                let value: String
+
+                init(_ value: String) {
+                    self.value = value
+                }
+            }
+            """,
+            diagnostics: [
+                DiagnosticSpec(
+                    message: "@Mapper requires every initializer parameter to have an explicit label; use the parameter's internal name as the label instead of '_'",
+                    line: 5,
+                    column: 10,
+                    fixIts: [
+                        FixItSpec(message: "Use 'value' as the parameter's label"),
+                    ]
+                ),
+            ],
+            macros: macros
+        )
+    }
+
     func testDiagnosesNotAStruct() {
         assertMacroExpansion(
             """
