@@ -149,9 +149,25 @@ extension Address {
         static func buildBlock(_ street: String, _ city: String, _ postalCode: String) -> Address {
             Address(street: street, city: city, postalCode: postalCode)
         }
+
+        static func buildBlock<Component>(_ component: Component) -> Component {
+            component
+        }
+
+        static func buildEither<Component>(first component: Component) -> Component {
+            component
+        }
+
+        static func buildEither<Component>(second component: Component) -> Component {
+            component
+        }
     }
 }
 ```
+
+The `buildEither` overloads (plus the generic single-field `buildBlock`) are what
+let `if`/`else` and `switch` appear directly inside the builder closure — see
+[Branching](#branching) below.
 
 `Boxed<T>` (shipped once, in the `SwiftMapper` library) is a stateless
 wrapper whose only job is to give each closure parameter a readable name via
@@ -172,26 +188,87 @@ untouched — the builder initializer is purely additive.
   initializer next to a struct you've already written; it never generates
   your model types.
 
-## A note on branching
+## Branching
 
-A `switch` (or `if`/`else`) statement cannot appear directly inside a
-`@resultBuilder`-annotated closure unless the builder implements
-`buildEither`/`buildOptional` for every branch shape — which the generated
-builder does not. Compute branch results with a **switch expression** (or a
-plain helper function) outside the labeled closure, then reference the
-already-computed value inside it:
+`if`/`else` and `switch` can appear **directly** inside a builder closure —
+each branch just needs to produce the same field type:
 
 ```swift
-let trend: TrendIndicator = switch domain.trend {
-case .up: .up
-case .down: .down
-case .none: .flat
+Handicap { Trend in
+    switch domain.trend {
+    case .up:
+        Trend { .up }
+    case .down:
+        Trend { .down }
+    case .none:
+        Trend { .flat }
+    }
 }
 
-Handicap { Trend in
-    Trend { trend }
+PersonData { FirstName, LastName, Age in
+    FirstName { "Ada" }
+    LastName { "Lovelace" }
+    if isSenior {
+        Age { 90 }
+    } else {
+        Age { 36 }
+    }
 }
 ```
+
+This works because the generated builder implements `buildEither(first:)` /
+`buildEither(second:)` (for `if`/`else` and `switch`) alongside a generic
+single-field `buildBlock`, so a branch that sets just one field type-checks
+the same way an unconditional statement would.
+
+### Optional fields need an explicit `else`
+
+A plain `if` with **no** `else` is *not* supported, even for a field whose
+declared type is already `Optional`. Swift's result-builder desugaring always
+wraps a no-`else` branch's value in one more level of `Optional` via
+`buildOptional` — for a field that's already `Optional<T>`, that produces
+`T??` instead of `T?`, which won't type-check. This isn't a SwiftMapper
+limitation so much as a general pitfall of Swift's result-builder machinery
+when a branch's own type is already Optional, so the generated builder
+intentionally doesn't implement `buildOptional` at all — write the `else`
+branch explicitly instead:
+
+```swift
+NicknameData { FirstName, Nickname in
+    FirstName { "Grace" }
+    if hasNickname {
+        Nickname { "Amazing Grace" }
+    } else {
+        Nickname { nil }
+    }
+}
+```
+
+### Not supported: partial-field branches
+
+A branch may only set **exactly one** field per statement inside it (or all
+of the struct's fields, if the branch is the closure's sole statement).
+Setting a subset of two-or-more fields conditionally isn't supported — split
+those fields into their own `if`/`else` (or `switch`) blocks instead.
+
+## Diagnostics
+
+`@Mapper` reports errors at compile time, pointing at the exact syntax that's
+wrong:
+
+- **Not a struct** — `@Mapper` can only be attached to a struct.
+- **Missing initializer** — the struct must declare exactly one initializer
+  whose parameters define the mapped fields.
+- **Multiple initializers** — each initializer beyond the first is flagged
+  individually, at its own location, so you can see exactly which ones to
+  remove or merge.
+- **Unsupported (variadic) parameters** — not supported by the generated
+  builder.
+- **Unlabeled parameters** (`_ name: String`) — flagged with a **Fix-It**
+  that promotes the parameter's internal name to also be its label (turning
+  `_ name: String` into `name name: String`), since that's the fix Xcode can
+  apply automatically in nearly every case.
+- **No fields** — the initializer must declare at least one parameter.
 
 ## Development
 
