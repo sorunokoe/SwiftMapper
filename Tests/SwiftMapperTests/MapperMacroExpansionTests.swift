@@ -97,7 +97,7 @@ final class MapperMacroExpansionTests: XCTestCase {
         assertMacroExpansion(
             """
             @Mapper
-            struct TwoInits {
+            struct ThreeInits {
                 let value: String
 
                 init(value: String) {
@@ -106,11 +106,15 @@ final class MapperMacroExpansionTests: XCTestCase {
 
                 init() {
                     self.value = ""
+                }
+
+                init(other: Int) {
+                    self.value = "\\(other)"
                 }
             }
             """,
             expandedSource: """
-            struct TwoInits {
+            struct ThreeInits {
                 let value: String
 
                 init(value: String) {
@@ -119,13 +123,22 @@ final class MapperMacroExpansionTests: XCTestCase {
 
                 init() {
                     self.value = ""
+                }
+
+                init(other: Int) {
+                    self.value = "\\(other)"
                 }
             }
             """,
             diagnostics: [
                 DiagnosticSpec(
                     message: "@Mapper found more than one initializer; only a single canonical initializer is supported",
-                    line: 5,
+                    line: 9,
+                    column: 5
+                ),
+                DiagnosticSpec(
+                    message: "@Mapper found more than one initializer; only a single canonical initializer is supported",
+                    line: 13,
                     column: 5
                 ),
             ],

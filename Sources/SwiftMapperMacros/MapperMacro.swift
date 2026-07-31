@@ -26,7 +26,9 @@ public struct MapperMacro: MemberMacro {
         }
 
         guard initializers.count == 1 else {
-            context.diagnose(MapperDiagnostic.multipleInitializers.diagnose(at: canonicalInit))
+            for extraInit in initializers.dropFirst() {
+                context.diagnose(MapperDiagnostic.multipleInitializers.diagnose(at: extraInit))
+            }
             return []
         }
 
