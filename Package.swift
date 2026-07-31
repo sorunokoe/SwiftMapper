@@ -15,7 +15,12 @@ let package = Package(
         .library(name: "SwiftMapper", targets: ["SwiftMapper"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/swiftlang/swift-syntax.git", from: "509.0.0"),
+        // An explicit upper bound (rather than `from:`) keeps this package
+        // resolvable alongside other swift-syntax consumers that pin newer
+        // 6xx releases — swift-syntax's leading version component tracks
+        // Swift compiler releases, so `from:` alone (an "up to next major"
+        // range) would only match the 509.x line.
+        .package(url: "https://github.com/swiftlang/swift-syntax.git", "509.0.0"..<"700.0.0"),
     ],
     targets: [
         // The compiler plugin that implements the `@Mapper` macro.
