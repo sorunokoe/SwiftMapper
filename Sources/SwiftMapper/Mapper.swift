@@ -59,15 +59,15 @@
 ///             ProfileHeaderData(profile: profile, fullname: fullname, nickname: nickname)
 ///         }
 ///
+///         public static func buildBlock<Component>(_ component: Component) -> Component {
+///             component
+///         }
+///
 ///         public static func buildEither<Component>(first component: Component) -> Component {
 ///             component
 ///         }
 ///
 ///         public static func buildEither<Component>(second component: Component) -> Component {
-///             component
-///         }
-///
-///         public static func buildOptional<Component>(_ component: Component?) -> Component? {
 ///             component
 ///         }
 ///     }
@@ -85,9 +85,8 @@
 /// ```
 ///
 /// `if`/`else` and `switch` can appear directly inside that closure — each
-/// branch just needs to produce the same field type — and a plain `if` (no
-/// `else`) works for fields whose declared type is already `Optional`. See
-/// the generated `buildEither`/`buildOptional` functions above.
+/// branch just needs to produce the same field type. See the generated
+/// `buildEither` functions above.
 ///
 /// ## Requirements (v1)
 ///
