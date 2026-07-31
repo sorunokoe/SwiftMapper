@@ -61,7 +61,7 @@ Add SwiftMapper as a package dependency in `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/<your-org>/SwiftMapper.git", from: "1.0.0"),
+    .package(url: "https://github.com/sorunokoe/SwiftMapper.git", from: "1.0.0"),
 ]
 ```
 
