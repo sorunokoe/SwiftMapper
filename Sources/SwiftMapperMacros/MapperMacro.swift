@@ -85,6 +85,18 @@ public struct MapperMacro: MemberMacro {
             \(accessModifier)static func buildBlock(\(buildBlockParameters)) -> \(typeName) {
                 \(typeName)(\(buildBlockArguments))
             }
+
+            \(accessModifier)static func buildEither<Component>(first component: Component) -> Component {
+                component
+            }
+
+            \(accessModifier)static func buildEither<Component>(second component: Component) -> Component {
+                component
+            }
+
+            \(accessModifier)static func buildOptional<Component>(_ component: Component?) -> Component? {
+                component
+            }
         }
         """
 

@@ -50,6 +50,18 @@ final class MapperMacroExpansionTests: XCTestCase {
                     public static func buildBlock(_ profile: String, _ fullname: String) -> ProfileHeaderData {
                         ProfileHeaderData(profile: profile, fullname: fullname)
                     }
+
+                    public static func buildEither<Component>(first component: Component) -> Component {
+                        component
+                    }
+
+                    public static func buildEither<Component>(second component: Component) -> Component {
+                        component
+                    }
+
+                    public static func buildOptional<Component>(_ component: Component?) -> Component? {
+                        component
+                    }
                 }
             }
             """,
