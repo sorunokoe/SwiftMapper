@@ -122,6 +122,143 @@ final class MapperMacroExpansionTests: XCTestCase {
         )
     }
 
+    func testKeepsGlobalActorAttributeButStripsEscapingFromParameterTypes() {
+        assertMacroExpansion(
+            """
+            @Mapper
+            struct Chart: Equatable {
+                let render: @MainActor () -> Int
+
+                init(render: @MainActor @escaping () -> Int) {
+                    self.render = render
+                }
+            }
+            """,
+            expandedSource: """
+            struct Chart: Equatable {
+                let render: @MainActor () -> Int
+
+                init(render: @MainActor @escaping () -> Int) {
+                    self.render = render
+                }
+
+                init(
+                    @ChartBuilder
+                    _ creation: (
+                        _ Render: Boxed<@MainActor () -> Int>
+                    ) -> Self
+                ) {
+                    self = creation(.init())
+                }
+
+                @resultBuilder
+                enum ChartBuilder {
+                    static func buildBlock(_ render: @MainActor @escaping () -> Int) -> Chart {
+                        Chart(render: render)
+                    }
+
+                    static func buildBlock<Component>(_ component: Component) -> Component {
+                        component
+                    }
+
+                    static func buildEither<Component>(first component: Component) -> Component {
+                        component
+                    }
+
+                    static func buildEither<Component>(second component: Component) -> Component {
+                        component
+                    }
+                }
+            }
+            """,
+            macros: macros
+        )
+    }
+
+    func testWarnsAboutLikelyEquatableConformanceConflict() {
+        assertMacroExpansion(
+            """
+            @Mapper
+            struct Chart: Equatable {
+                let id: Int
+                let render: () -> Int
+
+                init(id: Int, render: @escaping () -> Int) {
+                    self.id = id
+                    self.render = render
+                }
+
+                static func == (lhs: Self, rhs: Self) -> Bool {
+                    lhs.id == rhs.id
+                }
+            }
+            """,
+            expandedSource: """
+            struct Chart: Equatable {
+                let id: Int
+                let render: () -> Int
+
+                init(id: Int, render: @escaping () -> Int) {
+                    self.id = id
+                    self.render = render
+                }
+
+                static func == (lhs: Self, rhs: Self) -> Bool {
+                    lhs.id == rhs.id
+                }
+
+                init(
+                    @ChartBuilder
+                    _ creation: (
+                        _ Id: Boxed<Int>,
+                        _ Render: Boxed<() -> Int>
+                    ) -> Self
+                ) {
+                    self = creation(.init(), .init())
+                }
+
+                @resultBuilder
+                enum ChartBuilder {
+                    static func buildBlock(_ id: Int, _ render: @escaping () -> Int) -> Chart {
+                        Chart(id: id, render: render)
+                    }
+
+                    static func buildBlock<Component>(_ component: Component) -> Component {
+                        component
+                    }
+
+                    static func buildEither<Component>(first component: Component) -> Component {
+                        component
+                    }
+
+                    static func buildEither<Component>(second component: Component) -> Component {
+                        component
+                    }
+                }
+            }
+            """,
+            diagnostics: [
+                DiagnosticSpec(
+                    message: """
+                    This struct declares its own '==' (or '<'/'hash(into:)') alongside a conformance \
+                    that's normally auto-synthesized, which usually means a stored property (often a \
+                    function-typed field) isn't itself Equatable/Hashable/Comparable. Combined with \
+                    @Mapper, this can trigger a known Swift compiler bug where the compiler reports \
+                    "type does not conform to protocol" / "multiple matching functions named '=='" even \
+                    though the generated code is correct (swiftlang/swift#70087) — because @Mapper must \
+                    declare `names: arbitrary`, which makes the compiler consider that it *might* \
+                    generate '==' too. If you hit that error, this struct isn't a good fit for @Mapper \
+                    until the upstream bug is fixed — keep it on a plain initializer instead.
+                    """,
+                    line: 1,
+                    column: 1,
+                    severity: .warning
+                ),
+            ],
+            macros: macros
+        )
+    }
+
     func testDiagnosesMissingInitializer() {
         assertMacroExpansion(
             """

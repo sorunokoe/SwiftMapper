@@ -121,8 +121,14 @@ builder closure, the same way you'd construct it anywhere else.
 - Initializer parameters must be simple `label: Type` parameters: no
   variadics, no unlabeled (`_`) parameters, no parameter packs. Ownership
   specifiers (`consuming`, `borrowing`) on a parameter are supported and
-  don't affect the generated builder's field type.
+  don't affect the generated builder's field type. Parameter-only attributes
+  (`@escaping`, `@autoclosure`) are also stripped from the field's `Boxed<T>`
+  type, while type-level attributes that are part of the type itself (e.g.
+  `@MainActor`, `@Sendable` on a function-typed field) are preserved.
 - Generic structs are not yet supported.
+- See [Known limitations](#known-limitations) for a specific, unavoidable
+  Swift compiler interaction to be aware of when a field type isn't itself
+  `Equatable`/`Hashable`/`Comparable`.
 
 These constraints are intentionally narrow for v1 — see
 [Non-goals](#non-goals) for why.
@@ -271,6 +277,49 @@ wrong:
   `_ name: String` into `name name: String`), since that's the fix Xcode can
   apply automatically in nearly every case.
 - **No fields** — the initializer must declare at least one parameter.
+- **Likely `Equatable`/`Hashable`/`Comparable` conflict** (warning, not an
+  error) — emitted when the struct conforms to one of those protocols *and*
+  already hand-writes `==`/`<`/`hash(into:)` itself. This shape can trigger a
+  known Swift compiler bug when combined with `@Mapper` — see
+  [Known limitations](#known-limitations).
+
+## Known limitations
+
+### `Equatable`/`Hashable`/`Comparable` conflict with a hand-written witness
+
+If a struct conforms to `Equatable`, `Hashable`, or `Comparable` **and** hand-writes
+its own `==`, `hash(into:)`, or `<` (typically because a stored field — often a
+function type — isn't itself Equatable/Hashable/Comparable, so the compiler
+can't auto-synthesize the witness), attaching `@Mapper` to that struct can
+trigger a **Swift compiler bug**, not a SwiftMapper bug:
+[swiftlang/swift#70087](https://github.com/swiftlang/swift/issues/70087).
+
+The symptom is a confusing compiler error even though the macro-generated code
+is correct:
+
+```
+error: type 'Chart' does not conform to protocol 'Equatable'
+note: multiple matching functions named '==' with type '(Chart, Chart) -> Bool'
+note: candidate exactly matches
+note: candidate exactly matches
+```
+
+**Root cause**: `@Mapper` must declare `@attached(member, names: arbitrary)`
+(the generated builder init and `<Type>Builder` enum name depend on the
+attached type's name, so the fixed `names: named(...)` list Swift macros can
+otherwise use isn't expressible). Declaring `names: arbitrary` makes the
+compiler treat `==`/`<`/`hash(into:)` as names the macro *might* generate —
+even though `@Mapper` never actually generates them — which conflicts with
+protocol-conformance synthesis for a hand-written witness. This reproduces
+identically whether the macro is a `member` or an `extension` macro, and is
+unrelated to anything project-specific; it's an upstream Swift toolchain
+issue with no available workaround at the macro-author level as of this
+writing.
+
+`@Mapper` detects this specific shape (best-effort, syntax-only — it can't see
+whether a field type is actually Equatable) and emits a **warning** pointing
+here. If you hit the actual compiler error, **don't apply `@Mapper`** to that
+struct — keep it on its plain initializer until the upstream bug is fixed.
 
 ## Development
 

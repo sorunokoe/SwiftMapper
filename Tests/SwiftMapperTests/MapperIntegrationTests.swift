@@ -35,6 +35,23 @@ private struct ConsumingFieldData: Equatable, Sendable {
     }
 }
 
+// Note: this struct intentionally does *not* conform to `Equatable`/`Sendable`
+// with a hand-written witness. Doing so alongside `@Mapper` can trigger a
+// known Swift compiler bug (swiftlang/swift#70087) where a member macro
+// declaring `names: arbitrary` conflicts with a hand-written `==`/`hash(into:)`
+// — see `MapperDiagnostic.likelyEquatableConformanceConflict` for the
+// warning `@Mapper` emits when it detects this shape.
+@Mapper
+private struct MainActorClosureFieldData {
+    let id: Int
+    let render: @MainActor () -> Int
+
+    init(id: Int, render: @MainActor @escaping () -> Int) {
+        self.id = id
+        self.render = render
+    }
+}
+
 @Suite("Mapper macro integration")
 struct MapperIntegrationTests {
     @Test("Builder initializer produces the same value as the canonical initializer")
@@ -132,5 +149,17 @@ struct MapperIntegrationTests {
         }
 
         #expect(built == ConsumingFieldData(value: "hello"))
+    }
+
+    @Test("Global-actor-isolated escaping closure fields keep their actor isolation")
+    @MainActor
+    func mainActorEscapingClosureFieldSupport() {
+        let built = MainActorClosureFieldData { Id, Render in
+            Id { 1 }
+            Render { { 42 } }
+        }
+
+        #expect(built.id == 1)
+        #expect(built.render() == 42)
     }
 }
