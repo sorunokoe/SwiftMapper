@@ -259,6 +259,48 @@ final class MapperMacroExpansionTests: XCTestCase {
         )
     }
 
+    func testDiagnosesDefaultValuedStoredProperty() {
+        assertMacroExpansion(
+            """
+            @Mapper
+            struct WithDefault: Identifiable {
+                let id: UUID = .init()
+                let value: String
+
+                init(value: String) {
+                    self.value = value
+                }
+            }
+            """,
+            expandedSource: """
+            struct WithDefault: Identifiable {
+                let id: UUID = .init()
+                let value: String
+
+                init(value: String) {
+                    self.value = value
+                }
+            }
+            """,
+            diagnostics: [
+                DiagnosticSpec(
+                    message: """
+                    @Mapper's generated builder initializer reassigns 'self' as a whole (`self = creation(...)`), \
+                    which the Swift compiler cannot reconcile with a 'let' property that has an in-place default \
+                    value here — it always reports "immutable value may only be initialized once", even though the \
+                    property is never touched explicitly. This is a real Swift compiler limitation, not specific to \
+                    @Mapper: remove the default value from the declaration (`let x: T`) and set it explicitly inside \
+                    the canonical initializer's body instead (`self.x = <default>`), or change `let` to `var` if the \
+                    property is meant to be mutable.
+                    """,
+                    line: 3,
+                    column: 9
+                ),
+            ],
+            macros: macros
+        )
+    }
+
     func testDiagnosesMissingInitializer() {
         assertMacroExpansion(
             """

@@ -126,6 +126,13 @@ builder closure, the same way you'd construct it anywhere else.
   type, while type-level attributes that are part of the type itself (e.g.
   `@MainActor`, `@Sendable` on a function-typed field) are preserved.
 - Generic structs are not yet supported.
+- Stored `let` properties may **not** declare an in-place default value (e.g.
+  `let id: UUID = .init()`) — this is a real Swift compiler limitation (not
+  specific to `@Mapper`; see [Known limitations](#known-limitations)) that
+  makes any additional initializer touching that property fail to compile.
+  `@Mapper` detects this and raises a compile-time error with guidance; the
+  fix is to declare the property without a default (`let id: UUID`) and set
+  it explicitly inside the canonical initializer's body instead.
 - See [Known limitations](#known-limitations) for a specific, unavoidable
   Swift compiler interaction to be aware of when a field type isn't itself
   `Equatable`/`Hashable`/`Comparable`.
@@ -277,6 +284,11 @@ wrong:
   `_ name: String` into `name name: String`), since that's the fix Xcode can
   apply automatically in nearly every case.
 - **No fields** — the initializer must declare at least one parameter.
+- **Default-valued `let` property** (error) — emitted when a stored `let`
+  property declares an in-place default value (e.g. `let id: UUID = .init()`).
+  This always breaks the build once `@Mapper`'s generated builder init is
+  added — see [Known limitations](#known-limitations) for why, and how to fix
+  it.
 - **Likely `Equatable`/`Hashable`/`Comparable` conflict** (warning, not an
   error) — emitted when the struct conforms to one of those protocols *and*
   already hand-writes `==`/`<`/`hash(into:)` itself. This shape can trigger a
@@ -284,6 +296,53 @@ wrong:
   [Known limitations](#known-limitations).
 
 ## Known limitations
+
+### Stored `let` properties can't have an in-place default value
+
+A stored `let` property declared with an in-place default value, e.g.:
+
+```swift
+struct Chart: Identifiable {
+    let id: UUID = .init()
+    let value: String
+    ...
+}
+```
+
+can never be assigned by any initializer other than the implicit default-value
+prologue Swift inserts for it — not even by explicitly writing `self.id = ...`
+in your own initializer, and not by a whole-`self` reassignment like
+`self = other`. Any attempt produces:
+
+```
+error: immutable value 'self.id' may only be initialized once
+```
+
+**This is a genuine Swift compiler limitation, unrelated to macros or
+`@Mapper`** — it reproduces with a plain, hand-written struct and no macros at
+all. `@Mapper`'s generated builder initializer always does
+`self = creation(...)` to assemble the full value from the builder closure, so
+any struct with this shape will always fail to compile once `@Mapper` is
+attached.
+
+**Fix**: don't give the property an in-place default. Declare it without one
+and set it explicitly inside the canonical initializer's body instead:
+
+```swift
+struct Chart: Identifiable {
+    let id: UUID
+    let value: String
+
+    init(value: String) {
+        self.id = .init()
+        self.value = value
+    }
+}
+```
+
+`@Mapper` detects this shape deterministically (unlike the Equatable case
+below, this isn't a heuristic — it's always broken) and raises a compile-time
+**error** pointing at the offending property.
 
 ### `Equatable`/`Hashable`/`Comparable` conflict with a hand-written witness
 

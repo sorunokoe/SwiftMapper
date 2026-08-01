@@ -19,6 +19,10 @@ public struct MapperMacro: MemberMacro {
 
         warnAboutLikelyEquatableConformanceConflict(in: structDecl, context: context)
 
+        guard !diagnoseDefaultValuedStoredProperties(in: structDecl, context: context) else {
+            return []
+        }
+
         let initializers = structDecl.memberBlock.members
             .compactMap { $0.decl.as(InitializerDeclSyntax.self) }
 
@@ -233,6 +237,7 @@ private enum MapperDiagnostic: String, DiagnosticMessage {
     case unlabeledParameter
     case noFields
     case likelyEquatableConformanceConflict
+    case defaultValuedStoredProperty
 
     var message: String {
         switch self {
@@ -248,6 +253,16 @@ private enum MapperDiagnostic: String, DiagnosticMessage {
             return "@Mapper requires every initializer parameter to have an explicit label; use the parameter's internal name as the label instead of '_'"
         case .noFields:
             return "@Mapper requires the initializer to declare at least one parameter"
+        case .defaultValuedStoredProperty:
+            return """
+            @Mapper's generated builder initializer reassigns 'self' as a whole (`self = creation(...)`), \
+            which the Swift compiler cannot reconcile with a 'let' property that has an in-place default \
+            value here — it always reports "immutable value may only be initialized once", even though the \
+            property is never touched explicitly. This is a real Swift compiler limitation, not specific to \
+            @Mapper: remove the default value from the declaration (`let x: T`) and set it explicitly inside \
+            the canonical initializer's body instead (`self.x = <default>`), or change `let` to `var` if the \
+            property is meant to be mutable.
+            """
         case .likelyEquatableConformanceConflict:
             return """
             This struct declares its own '==' (or '<'/'hash(into:)') alongside a conformance \
@@ -272,7 +287,7 @@ private enum MapperDiagnostic: String, DiagnosticMessage {
         case .likelyEquatableConformanceConflict:
             return .warning
         case .notAStruct, .missingInitializer, .multipleInitializers, .unsupportedParameter, .unlabeledParameter,
-             .noFields:
+             .noFields, .defaultValuedStoredProperty:
             return .error
         }
     }
@@ -321,6 +336,37 @@ private func warnAboutLikelyEquatableConformanceConflict(
     }
 
     context.diagnose(MapperDiagnostic.likelyEquatableConformanceConflict.diagnose(at: structDecl))
+}
+
+/// Detects a real, deterministic (not heuristic) Swift compiler limitation:
+/// a stored `let` property declared with an in-place default value (e.g.
+/// `let id: UUID = .init()`) can never be touched — explicitly or via a
+/// whole-`self` reassignment — by any initializer other than the implicit
+/// default-value prologue, or the compiler reports "immutable value may
+/// only be initialized once". Since `@Mapper`'s generated builder init
+/// always does `self = creation(...)`, any such property always breaks the
+/// build. This is unrelated to macros in general (it reproduces with plain
+/// hand-written structs too), so it's diagnosed as a hard error rather than
+/// a best-effort warning. Returns `true` (and diagnoses) if the struct
+/// cannot be expanded because of this.
+private func diagnoseDefaultValuedStoredProperties(
+    in structDecl: StructDeclSyntax,
+    context: some MacroExpansionContext
+) -> Bool {
+    var foundOffendingProperty = false
+    for member in structDecl.memberBlock.members {
+        guard let variable = member.decl.as(VariableDeclSyntax.self),
+              variable.bindingSpecifier.tokenKind == .keyword(.let)
+        else {
+            continue
+        }
+
+        for binding in variable.bindings where binding.initializer != nil {
+            context.diagnose(MapperDiagnostic.defaultValuedStoredProperty.diagnose(at: binding))
+            foundOffendingProperty = true
+        }
+    }
+    return foundOffendingProperty
 }
 
 /// The Fix-It offered alongside `MapperDiagnostic.unlabeledParameter`: when
