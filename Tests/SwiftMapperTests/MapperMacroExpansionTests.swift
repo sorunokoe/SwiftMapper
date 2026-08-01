@@ -69,6 +69,59 @@ final class MapperMacroExpansionTests: XCTestCase {
         )
     }
 
+    func testStripsOwnershipSpecifiersFromParameterTypes() {
+        assertMacroExpansion(
+            """
+            @Mapper
+            struct Note: Equatable {
+                let text: String
+
+                init(text: consuming String) {
+                    self.text = text
+                }
+            }
+            """,
+            expandedSource: """
+            struct Note: Equatable {
+                let text: String
+
+                init(text: consuming String) {
+                    self.text = text
+                }
+
+                init(
+                    @NoteBuilder
+                    _ creation: (
+                        _ Text: Boxed<String>
+                    ) -> Self
+                ) {
+                    self = creation(.init())
+                }
+
+                @resultBuilder
+                enum NoteBuilder {
+                    static func buildBlock(_ text: String) -> Note {
+                        Note(text: text)
+                    }
+
+                    static func buildBlock<Component>(_ component: Component) -> Component {
+                        component
+                    }
+
+                    static func buildEither<Component>(first component: Component) -> Component {
+                        component
+                    }
+
+                    static func buildEither<Component>(second component: Component) -> Component {
+                        component
+                    }
+                }
+            }
+            """,
+            macros: macros
+        )
+    }
+
     func testDiagnosesMissingInitializer() {
         assertMacroExpansion(
             """

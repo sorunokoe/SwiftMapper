@@ -26,6 +26,15 @@ private struct NicknameData: Equatable, Sendable {
     }
 }
 
+@Mapper
+private struct ConsumingFieldData: Equatable, Sendable {
+    let value: String
+
+    init(value: consuming String) {
+        self.value = value
+    }
+}
+
 @Suite("Mapper macro integration")
 struct MapperIntegrationTests {
     @Test("Builder initializer produces the same value as the canonical initializer")
@@ -114,5 +123,14 @@ struct MapperIntegrationTests {
 
         #expect(build(hasNickname: true) == NicknameData(firstName: "Grace", nickname: "Amazing Grace"))
         #expect(build(hasNickname: false) == NicknameData(firstName: "Grace", nickname: nil))
+    }
+
+    @Test("initializer parameters with ownership specifiers (consuming/borrowing) are supported")
+    func consumingParameterSupport() {
+        let built = ConsumingFieldData { Value in
+            Value { "hello" }
+        }
+
+        #expect(built == ConsumingFieldData(value: "hello"))
     }
 }

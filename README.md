@@ -119,7 +119,9 @@ builder closure, the same way you'd construct it anywhere else.
   `id` given a fresh default value inside the initializer body) are left
   untouched.
 - Initializer parameters must be simple `label: Type` parameters: no
-  variadics, no unlabeled (`_`) parameters, no parameter packs.
+  variadics, no unlabeled (`_`) parameters, no parameter packs. Ownership
+  specifiers (`consuming`, `borrowing`) on a parameter are supported and
+  don't affect the generated builder's field type.
 - Generic structs are not yet supported.
 
 These constraints are intentionally narrow for v1 — see

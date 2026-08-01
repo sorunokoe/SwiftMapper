@@ -64,7 +64,7 @@ public struct MapperMacro: MemberMacro {
                 return []
             }
 
-            let type = parameter.type.trimmedDescription
+            let type = parameter.type.strippingOwnershipSpecifiers.trimmedDescription
             fields.append(MapperField(label: label, type: type))
         }
 
@@ -134,6 +134,21 @@ private struct MapperField {
 
     var capitalizedLabel: String {
         label.prefix(1).uppercased() + label.dropFirst()
+    }
+}
+
+private extension TypeSyntax {
+    /// Strips ownership specifiers (`consuming`, `borrowing`, `inout`, etc.)
+    /// from a parameter's type. These specifiers are only meaningful on a
+    /// function parameter declaration — they cannot appear as a generic
+    /// argument (e.g. `Boxed<consuming String>` is invalid Swift) — so the
+    /// macro must use the plain, unqualified type when generating
+    /// `Boxed<Component>`, `buildBlock`, etc.
+    var strippingOwnershipSpecifiers: TypeSyntax {
+        guard let attributed = self.as(AttributedTypeSyntax.self) else {
+            return self
+        }
+        return attributed.baseType
     }
 }
 

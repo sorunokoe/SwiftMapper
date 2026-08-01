@@ -7,3 +7,8 @@ xcuserdata/
 DerivedData/
 .vscode/
 *.xcodeproj
+
+# Library packages conventionally don't commit their own resolved
+# versions — consumers resolve against their own dependency graph.
+# (Locally, a pin may exist here as a sandbox workaround; never commit it.)
+Package.resolved
