@@ -35,12 +35,61 @@ private struct ConsumingFieldData: Equatable, Sendable {
     }
 }
 
-// Note: this struct intentionally does *not* conform to `Equatable`/`Sendable`
-// with a hand-written witness. Doing so alongside `@Mapper` can trigger a
-// known Swift compiler bug (swiftlang/swift#70087) where a member macro
-// declaring `names: arbitrary` conflicts with a hand-written `==`/`hash(into:)`
-// — see `MapperDiagnostic.likelyEquatableConformanceConflict` for the
-// warning `@Mapper` emits when it detects this shape.
+@Mapper
+private struct DecodableLikeUser: Equatable, Sendable {
+    let id: String
+    let name: String
+
+    @MapperCanonical
+    init(id: String, name: String) {
+        self.id = id
+        self.name = name
+    }
+
+    // Simulates a second, non-canonical initializer a real struct might need
+    // (e.g. a hand-written `Decodable.init(from:)`) that @Mapper must leave
+    // untouched when a single other initializer is marked @MapperCanonical.
+    init(fromLegacyID legacyID: Int, name: String) {
+        self.id = "legacy-\(legacyID)"
+        self.name = name
+    }
+}
+
+
+@Mapper
+private struct LabeledValue<Value: Equatable & Sendable>: Equatable, Sendable {
+    let label: String
+    let value: Value
+
+    init(label: String, value: Value) {
+        self.label = label
+        self.value = value
+    }
+}
+
+@Mapper
+private struct Cart: Equatable, Sendable {
+    let itemTitles: [String]
+
+    init(itemTitles: [String]) {
+        self.itemTitles = itemTitles
+    }
+}
+
+@Mapper
+private struct ConstrainedPair<Key, Value>: Equatable
+    where Key: Hashable & Equatable, Value: Equatable
+{
+    let key: Key
+    let value: Value
+
+    init(key: Key, value: Value) {
+        self.key = key
+        self.value = value
+    }
+}
+
+// Global-actor-isolated escaping closure field support.
 @Mapper
 private struct MainActorClosureFieldData {
     let id: Int
@@ -49,6 +98,69 @@ private struct MainActorClosureFieldData {
     init(id: Int, render: @MainActor @escaping () -> Int) {
         self.id = id
         self.render = render
+    }
+}
+
+@Mapper
+private struct WithDefaultValuedID: Identifiable, Equatable, Sendable {
+    let id: Int = 42
+    let value: String
+
+    init(value: String) {
+        self.value = value
+    }
+}
+
+@Mapper
+private struct HandWrittenEquatableWitness: Equatable {
+    let id: Int
+    let render: () -> Int
+
+    init(id: Int, render: @escaping () -> Int) {
+        self.id = id
+        self.render = render
+    }
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.id == rhs.id
+    }
+}
+
+@Mapper
+private final class PersonBox: Equatable {
+    let firstName: String
+    let lastName: String
+
+    init(firstName: String, lastName: String) {
+        self.firstName = firstName
+        self.lastName = lastName
+    }
+
+    static func == (lhs: PersonBox, rhs: PersonBox) -> Bool {
+        lhs.firstName == rhs.firstName && lhs.lastName == rhs.lastName
+    }
+}
+
+// Exercises class support, generics, and auto-detection together: the
+// memberwise-shaped designated initializer is picked automatically even
+// though this class also declares a second, non-memberwise convenience
+// initializer, with no @MapperCanonical marker needed.
+@Mapper
+private final class GenericBox<Value: Equatable>: Equatable {
+    let label: String
+    let value: Value
+
+    init(label: String, value: Value) {
+        self.label = label
+        self.value = value
+    }
+
+    convenience init(value: Value) {
+        self.init(label: "unlabeled", value: value)
+    }
+
+    static func == (lhs: GenericBox<Value>, rhs: GenericBox<Value>) -> Bool {
+        lhs.label == rhs.label && lhs.value == rhs.value
     }
 }
 
@@ -161,5 +273,100 @@ struct MapperIntegrationTests {
 
         #expect(built.id == 1)
         #expect(built.render() == 42)
+    }
+
+    @Test("Generic structs with a single type parameter support the builder initializer")
+    func genericStructBuilderSupport() {
+        let intValue = LabeledValue<Int> { Label, Value in
+            Label { "count" }
+            Value { 3 + 4 }
+        }
+        #expect(intValue == LabeledValue(label: "count", value: 7))
+
+        let stringValue = LabeledValue<String> { Label, Value in
+            Label { "name" }
+            Value { "Ada".uppercased() }
+        }
+        #expect(stringValue == LabeledValue(label: "name", value: "ADA"))
+    }
+
+    @Test("Generic structs with multiple constrained type parameters and a where clause support the builder initializer")
+    func constrainedGenericStructBuilderSupport() {
+        let built = ConstrainedPair<String, Int> { Key, Value in
+            Key { "answer" }
+            Value { 42 }
+        }
+
+        #expect(built == ConstrainedPair(key: "answer", value: 42))
+    }
+
+    @Test("@MapperCanonical picks the marked initializer's fields, leaving other initializers untouched")
+    func markedCanonicalInitializerBuilderSupport() {
+        let built = DecodableLikeUser { Id, Name in
+            Id { "abc123" }
+            Name { "Ada" }
+        }
+
+        #expect(built == DecodableLikeUser(id: "abc123", name: "Ada"))
+
+        // The non-canonical initializer still works normally; @Mapper never
+        // touches it.
+        let viaLegacy = DecodableLikeUser(fromLegacyID: 7, name: "Grace")
+        #expect(viaLegacy == DecodableLikeUser(id: "legacy-7", name: "Grace"))
+    }
+
+    @Test("Boxed(mapping:_:) composes an array field element-by-element from a differently-typed source collection")
+    func collectionFieldElementWiseComposition() {
+        struct DomainItem {
+            let name: String
+        }
+
+        let domainItems = [DomainItem(name: "apple"), DomainItem(name: "bread")]
+
+        let built = Cart { ItemTitles in
+            ItemTitles(mapping: domainItems) { $0.name.capitalized }
+        }
+
+        #expect(built == Cart(itemTitles: ["Apple", "Bread"]))
+    }
+
+    @Test("Classes support the generated convenience builder initializer")
+    func classBuilderSupport() {
+        let built = PersonBox { FirstName, LastName in
+            FirstName { "Ada" }
+            LastName { "Lovelace" }
+        }
+
+        #expect(built == PersonBox(firstName: "Ada", lastName: "Lovelace"))
+    }
+
+    @Test("A stored let property with an in-place default value now compiles and works with @Mapper")
+    func defaultValuedStoredPropertyNoLongerBreaksTheBuild() {
+        let built = WithDefaultValuedID { Value in
+            Value { "hello" }
+        }
+
+        #expect(built.id == 42)
+        #expect(built.value == "hello")
+    }
+
+    @Test("A hand-written Equatable witness alongside @Mapper no longer triggers swiftlang/swift#70087")
+    func handWrittenEquatableWitnessNoLongerConflicts() {
+        let built = HandWrittenEquatableWitness { Id, Render in
+            Id { 1 }
+            Render { { 42 } }
+        }
+
+        #expect(built == HandWrittenEquatableWitness(id: 1, render: { 42 }))
+    }
+
+    @Test("A generic class with a non-memberwise convenience initializer still auto-detects its designated initializer")
+    func genericClassWithAutoDetectionSupport() {
+        let built = GenericBox<Int> { Label, Value in
+            Label { "count" }
+            Value { 42 }
+        }
+
+        #expect(built == GenericBox(label: "count", value: 42))
     }
 }

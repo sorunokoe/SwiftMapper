@@ -5,5 +5,6 @@ import SwiftSyntaxMacros
 struct SwiftMapperPlugin: CompilerPlugin {
     let providingMacros: [Macro.Type] = [
         MapperMacro.self,
+        MapperCanonicalMacro.self,
     ]
 }
