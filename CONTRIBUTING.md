@@ -8,27 +8,22 @@ small and deliberate — please read this before opening a PR.
 SwiftMapper's README lists explicit **non-goals** (no runtime combinator
 layer, no validation/error-accumulation framework). Any change that grows
 the library's surface area — new macro behavior, new diagnostics, new
-public API — should start as a short written plan, not a PR, so scope and
-tradeoffs can be discussed before code is written.
+public API — should start as a short written plan (in the PR description,
+or a tracking issue), not straight to code, so scope and tradeoffs can be
+discussed before it's written.
 
-This repository uses a lightweight plan/spec convention under
-[`docs/superpowers/`](docs/superpowers):
-
-- `docs/superpowers/plans/` — dated implementation plans (problem, goals,
-  explicit non-goals, task breakdown).
-- `docs/superpowers/specs/` — dated design specs for larger or riskier
-  changes, written *before* an implementation plan when the design itself
-  needs review first (see
-  [`2026-08-02-enum-support-design.md`](docs/superpowers/specs/2026-08-02-enum-support-design.md)
-  for an example of a spec-first, implementation-later change).
+For larger or riskier changes, write the design up as a short spec first —
+before an implementation plan — when the design itself needs review before
+any code is written.
 
 For a small, self-contained fix (a typo, a missing test, a diagnostic
 wording tweak), a plan isn't necessary — just open a PR.
 
 ## Making a change
 
-1. Open a plan (or spec, for larger changes) under `docs/superpowers/` if the
-   change adds capability rather than just fixing something existing.
+1. Write up a short plan (or spec, for larger changes) in the PR description
+   or a tracking issue if the change adds capability rather than just fixing
+   something existing.
 2. State non-goals explicitly. "Everything the code could plausibly do" is
    not scope — write down what you're deliberately *not* doing and why.
 3. Add tests before/alongside the change:

@@ -441,9 +441,9 @@ swift test
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) before opening a PR that adds
-capability rather than fixing something existing — this repo uses a short
-plan/spec convention under `docs/superpowers/` for anything that grows the
-library's surface area.
+capability rather than fixing something existing — this repo asks for a
+short written plan up front for anything that grows the library's surface
+area.
 
 ## Documentation
 
