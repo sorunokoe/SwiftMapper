@@ -454,9 +454,18 @@ private struct MapperField {
     /// dropping ownership specifiers, which the macro re-derives fresh
     /// rather than forwards.
     let parameterType: String
+    /// Computed once here (rather than as a computed property) because
+    /// `expansion(of:providingMembersOf:in:)` reads it several times per
+    /// field — the collision check plus the generated builder closure's
+    /// parameter list — and there's no reason to re-run the
+    /// capitalization/allocation on every access.
+    let capitalizedLabel: String
 
-    var capitalizedLabel: String {
-        label.prefix(1).uppercased() + label.dropFirst()
+    init(label: String, boxedType: String, parameterType: String) {
+        self.label = label
+        self.boxedType = boxedType
+        self.parameterType = parameterType
+        self.capitalizedLabel = label.prefix(1).uppercased() + label.dropFirst()
     }
 }
 
