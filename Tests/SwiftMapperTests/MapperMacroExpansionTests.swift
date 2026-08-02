@@ -5,7 +5,10 @@ import XCTest
 @testable import SwiftMapperMacros
 
 final class MapperMacroExpansionTests: XCTestCase {
-    private let macros: [String: Macro.Type] = ["Mapper": MapperMacro.self]
+    private let macros: [String: Macro.Type] = [
+        "Mapper": MapperMacro.self,
+        "MapperCanonical": MapperCanonicalMacro.self,
+    ]
 
     func testExpandsBuilderInitAndResultBuilder() {
         assertMacroExpansion(
@@ -316,7 +319,7 @@ final class MapperMacroExpansionTests: XCTestCase {
             """,
             diagnostics: [
                 DiagnosticSpec(
-                    message: "@Mapper requires the struct to declare exactly one initializer whose parameters define the mapped fields",
+                    message: "@Mapper requires the struct to declare at least one initializer whose parameters define the mapped fields",
                     line: 1,
                     column: 1
                 ),
@@ -364,16 +367,238 @@ final class MapperMacroExpansionTests: XCTestCase {
             """,
             diagnostics: [
                 DiagnosticSpec(
-                    message: "@Mapper found more than one initializer; only a single canonical initializer is supported",
+                    message: """
+                    @Mapper found more than one initializer; mark exactly one of them @MapperCanonical to tell \
+                    @Mapper which initializer's parameters define the mapped fields, or reduce the struct to a \
+                    single initializer
+                    """,
+                    line: 5,
+                    column: 5,
+                    fixIts: [
+                        FixItSpec(message: "Mark this initializer @MapperCanonical"),
+                    ]
+                ),
+                DiagnosticSpec(
+                    message: """
+                    @Mapper found more than one initializer; mark exactly one of them @MapperCanonical to tell \
+                    @Mapper which initializer's parameters define the mapped fields, or reduce the struct to a \
+                    single initializer
+                    """,
                     line: 9,
+                    column: 5,
+                    fixIts: [
+                        FixItSpec(message: "Mark this initializer @MapperCanonical"),
+                    ]
+                ),
+                DiagnosticSpec(
+                    message: """
+                    @Mapper found more than one initializer; mark exactly one of them @MapperCanonical to tell \
+                    @Mapper which initializer's parameters define the mapped fields, or reduce the struct to a \
+                    single initializer
+                    """,
+                    line: 13,
+                    column: 5,
+                    fixIts: [
+                        FixItSpec(message: "Mark this initializer @MapperCanonical"),
+                    ]
+                ),
+            ],
+            macros: macros
+        )
+    }
+
+    func testDiagnosesMultipleCanonicalInitializers() {
+        assertMacroExpansion(
+            """
+            @Mapper
+            struct TwoCanonical {
+                let value: String
+
+                @MapperCanonical
+                init(value: String) {
+                    self.value = value
+                }
+
+                @MapperCanonical
+                init(other: Int) {
+                    self.value = "\\(other)"
+                }
+            }
+            """,
+            expandedSource: """
+            struct TwoCanonical {
+                let value: String
+                init(value: String) {
+                    self.value = value
+                }
+                init(other: Int) {
+                    self.value = "\\(other)"
+                }
+            }
+            """,
+            diagnostics: [
+                DiagnosticSpec(
+                    message: "@Mapper found more than one initializer marked @MapperCanonical; only one is allowed per struct",
+                    line: 5,
                     column: 5
                 ),
                 DiagnosticSpec(
-                    message: "@Mapper found more than one initializer; only a single canonical initializer is supported",
-                    line: 13,
+                    message: "@Mapper found more than one initializer marked @MapperCanonical; only one is allowed per struct",
+                    line: 10,
                     column: 5
                 ),
             ],
+            macros: macros
+        )
+    }
+
+    func testExpandsBuilderInitUsingMarkedCanonicalInitializer() {
+        assertMacroExpansion(
+            """
+            @Mapper
+            struct User: Decodable {
+                let id: String
+                let name: String
+
+                @MapperCanonical
+                init(id: String, name: String) {
+                    self.id = id
+                    self.name = name
+                }
+
+                init(from decoder: Decoder) throws {
+                    let container = try decoder.container(keyedBy: CodingKeys.self)
+                    self.id = try container.decode(String.self, forKey: .id)
+                    self.name = try container.decode(String.self, forKey: .name)
+                }
+            }
+            """,
+            expandedSource: """
+            struct User: Decodable {
+                let id: String
+                let name: String
+                init(id: String, name: String) {
+                    self.id = id
+                    self.name = name
+                }
+
+                init(from decoder: Decoder) throws {
+                    let container = try decoder.container(keyedBy: CodingKeys.self)
+                    self.id = try container.decode(String.self, forKey: .id)
+                    self.name = try container.decode(String.self, forKey: .name)
+                }
+
+                init(
+                    @UserBuilder
+                    _ creation: (
+                        _ Id: Boxed<String>,
+                        _ Name: Boxed<String>
+                    ) -> Self
+                ) {
+                    self = creation(.init(), .init())
+                }
+
+                @resultBuilder
+                enum UserBuilder {
+                    static func buildBlock(_ id: String, _ name: String) -> User {
+                        User(id: id, name: name)
+                    }
+
+                    static func buildBlock<Component>(_ component: Component) -> Component {
+                        component
+                    }
+
+                    static func buildEither<Component>(first component: Component) -> Component {
+                        component
+                    }
+
+                    static func buildEither<Component>(second component: Component) -> Component {
+                        component
+                    }
+                }
+            }
+            """,
+            macros: macros
+        )
+    }
+
+    /// `@Mapper`'s own attribute-matching logic (`isMarkedMapperCanonical`)
+    /// recognizes both the bare (`@MapperCanonical`) and fully qualified
+    /// (`@SwiftMapper.MapperCanonical`) spellings, so it still picks the
+    /// marked initializer's fields either way. The test harness's own peer
+    /// macro attribute-stripping (a separate, unrelated expansion pass) only
+    /// matches attributes by their unqualified name, so unlike the bare
+    /// spelling, the qualified attribute text itself is left in the
+    /// `expandedSource` below rather than stripped, this is a harness detail
+    /// and not something `@Mapper`'s own resolution depends on.
+    func testRecognizesFullyQualifiedMapperCanonicalAttribute() {
+        assertMacroExpansion(
+            """
+            @Mapper
+            struct User: Decodable {
+                let id: String
+                let name: String
+
+                @SwiftMapper.MapperCanonical
+                init(id: String, name: String) {
+                    self.id = id
+                    self.name = name
+                }
+
+                init(from decoder: Decoder) throws {
+                    let container = try decoder.container(keyedBy: CodingKeys.self)
+                    self.id = try container.decode(String.self, forKey: .id)
+                    self.name = try container.decode(String.self, forKey: .name)
+                }
+            }
+            """,
+            expandedSource: """
+            struct User: Decodable {
+                let id: String
+                let name: String
+
+                @SwiftMapper.MapperCanonical
+                init(id: String, name: String) {
+                    self.id = id
+                    self.name = name
+                }
+
+                init(from decoder: Decoder) throws {
+                    let container = try decoder.container(keyedBy: CodingKeys.self)
+                    self.id = try container.decode(String.self, forKey: .id)
+                    self.name = try container.decode(String.self, forKey: .name)
+                }
+
+                init(
+                    @UserBuilder
+                    _ creation: (
+                        _ Id: Boxed<String>,
+                        _ Name: Boxed<String>
+                    ) -> Self
+                ) {
+                    self = creation(.init(), .init())
+                }
+
+                @resultBuilder
+                enum UserBuilder {
+                    static func buildBlock(_ id: String, _ name: String) -> User {
+                        User(id: id, name: name)
+                    }
+
+                    static func buildBlock<Component>(_ component: Component) -> Component {
+                        component
+                    }
+
+                    static func buildEither<Component>(first component: Component) -> Component {
+                        component
+                    }
+
+                    static func buildEither<Component>(second component: Component) -> Component {
+                        component
+                    }
+                }
+            }
+            """,
             macros: macros
         )
     }
@@ -407,6 +632,106 @@ final class MapperMacroExpansionTests: XCTestCase {
                     fixIts: [
                         FixItSpec(message: "Use 'value' as the parameter's label"),
                     ]
+                ),
+            ],
+            macros: macros
+        )
+    }
+
+    func testExpandsBuilderInitForGenericStructWithWhereClause() {
+        assertMacroExpansion(
+            """
+            @Mapper
+            struct LabeledValue<Value>: Equatable where Value: Equatable {
+                let label: String
+                let value: Value
+
+                init(label: String, value: Value) {
+                    self.label = label
+                    self.value = value
+                }
+            }
+            """,
+            expandedSource: """
+            struct LabeledValue<Value>: Equatable where Value: Equatable {
+                let label: String
+                let value: Value
+
+                init(label: String, value: Value) {
+                    self.label = label
+                    self.value = value
+                }
+
+                init(
+                    @LabeledValueBuilder
+                    _ creation: (
+                        _ Label: Boxed<String>,
+                        _ Value: Boxed<Value>
+                    ) -> Self
+                ) {
+                    self = creation(.init(), .init())
+                }
+
+                @resultBuilder
+                enum LabeledValueBuilder {
+                    static func buildBlock(_ label: String, _ value: Value) -> LabeledValue {
+                        LabeledValue(label: label, value: value)
+                    }
+
+                    static func buildBlock<Component>(_ component: Component) -> Component {
+                        component
+                    }
+
+                    static func buildEither<Component>(first component: Component) -> Component {
+                        component
+                    }
+
+                    static func buildEither<Component>(second component: Component) -> Component {
+                        component
+                    }
+                }
+            }
+            """,
+            macros: macros
+        )
+    }
+
+    func testDiagnosesCollidingCapitalizedFieldLabels() {
+        assertMacroExpansion(
+            """
+            @Mapper
+            struct Confusing: Equatable {
+                let name: String
+                let Name: Int
+
+                init(name: String, Name: Int) {
+                    self.name = name
+                    self.Name = Name
+                }
+            }
+            """,
+            expandedSource: """
+            struct Confusing: Equatable {
+                let name: String
+                let Name: Int
+
+                init(name: String, Name: Int) {
+                    self.name = name
+                    self.Name = Name
+                }
+            }
+            """,
+            diagnostics: [
+                DiagnosticSpec(
+                    message: """
+                    @Mapper capitalizes this parameter's label to 'Name' for the generated builder \
+                    closure, but parameter 'name' already capitalizes to the same name — the \
+                    generated builder initializer would end up with two parameters sharing that name. \
+                    Rename one of the two initializer parameters so their capitalized builder labels \
+                    don't collide.
+                    """,
+                    line: 6,
+                    column: 24
                 ),
             ],
             macros: macros

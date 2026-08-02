@@ -35,6 +35,60 @@ private struct ConsumingFieldData: Equatable, Sendable {
     }
 }
 
+@Mapper
+private struct DecodableLikeUser: Equatable, Sendable {
+    let id: String
+    let name: String
+
+    @MapperCanonical
+    init(id: String, name: String) {
+        self.id = id
+        self.name = name
+    }
+
+    // Simulates a second, non-canonical initializer a real struct might need
+    // (e.g. a hand-written `Decodable.init(from:)`) that @Mapper must leave
+    // untouched when a single other initializer is marked @MapperCanonical.
+    init(fromLegacyID legacyID: Int, name: String) {
+        self.id = "legacy-\(legacyID)"
+        self.name = name
+    }
+}
+
+
+@Mapper
+private struct LabeledValue<Value: Equatable & Sendable>: Equatable, Sendable {
+    let label: String
+    let value: Value
+
+    init(label: String, value: Value) {
+        self.label = label
+        self.value = value
+    }
+}
+
+@Mapper
+private struct Cart: Equatable, Sendable {
+    let itemTitles: [String]
+
+    init(itemTitles: [String]) {
+        self.itemTitles = itemTitles
+    }
+}
+
+@Mapper
+private struct ConstrainedPair<Key, Value>: Equatable
+    where Key: Hashable & Equatable, Value: Equatable
+{
+    let key: Key
+    let value: Value
+
+    init(key: Key, value: Value) {
+        self.key = key
+        self.value = value
+    }
+}
+
 // Note: this struct intentionally does *not* conform to `Equatable`/`Sendable`
 // with a hand-written witness. Doing so alongside `@Mapper` can trigger a
 // known Swift compiler bug (swiftlang/swift#70087) where a member macro
@@ -161,5 +215,60 @@ struct MapperIntegrationTests {
 
         #expect(built.id == 1)
         #expect(built.render() == 42)
+    }
+
+    @Test("Generic structs with a single type parameter support the builder initializer")
+    func genericStructBuilderSupport() {
+        let intValue = LabeledValue<Int> { Label, Value in
+            Label { "count" }
+            Value { 3 + 4 }
+        }
+        #expect(intValue == LabeledValue(label: "count", value: 7))
+
+        let stringValue = LabeledValue<String> { Label, Value in
+            Label { "name" }
+            Value { "Ada".uppercased() }
+        }
+        #expect(stringValue == LabeledValue(label: "name", value: "ADA"))
+    }
+
+    @Test("Generic structs with multiple constrained type parameters and a where clause support the builder initializer")
+    func constrainedGenericStructBuilderSupport() {
+        let built = ConstrainedPair<String, Int> { Key, Value in
+            Key { "answer" }
+            Value { 42 }
+        }
+
+        #expect(built == ConstrainedPair(key: "answer", value: 42))
+    }
+
+    @Test("@MapperCanonical picks the marked initializer's fields, leaving other initializers untouched")
+    func markedCanonicalInitializerBuilderSupport() {
+        let built = DecodableLikeUser { Id, Name in
+            Id { "abc123" }
+            Name { "Ada" }
+        }
+
+        #expect(built == DecodableLikeUser(id: "abc123", name: "Ada"))
+
+        // The non-canonical initializer still works normally; @Mapper never
+        // touches it.
+        let viaLegacy = DecodableLikeUser(fromLegacyID: 7, name: "Grace")
+        #expect(viaLegacy == DecodableLikeUser(id: "legacy-7", name: "Grace"))
+    }
+
+    @Test("Boxed(mapping:_:) composes an array field element-by-element from a differently-typed source collection")
+    func collectionFieldElementWiseComposition() {
+        struct DomainItem {
+            let name: String
+        }
+
+        let domainItems = [DomainItem(name: "apple"), DomainItem(name: "bread")]
+
+        let built = Cart { ItemTitles in
+            ItemTitles(mapping: domainItems) { $0.name.capitalized }
+        }
+
+        #expect(built == Cart(itemTitles: ["Apple", "Bread"]))
     }
 }

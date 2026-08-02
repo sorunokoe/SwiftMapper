@@ -1,5 +1,10 @@
 # SwiftMapper
 
+[![CI](https://github.com/sorunokoe/SwiftMapper/actions/workflows/ci.yml/badge.svg)](https://github.com/sorunokoe/SwiftMapper/actions/workflows/ci.yml)
+[![Swift Package Index](https://img.shields.io/endpoint?url=https%3A%2F%2Fswiftpackageindex.com%2Fapi%2Fpackages%2Fsorunokoe%2FSwiftMapper%2Fbadge%3Ftype%3Dswift-versions)](https://swiftpackageindex.com/sorunokoe/SwiftMapper)
+[![Platform compatibility](https://img.shields.io/endpoint?url=https%3A%2F%2Fswiftpackageindex.com%2Fapi%2Fpackages%2Fsorunokoe%2FSwiftMapper%2Fbadge%3Ftype%3Dplatforms)](https://swiftpackageindex.com/sorunokoe/SwiftMapper)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 A tiny Swift macro that turns a struct's own initializer into a composable,
 type-safe "field builder" DSL — without a runtime combinator library, and
 without hand-writing a `@resultBuilder` for every type you map into.
@@ -113,11 +118,13 @@ builder closure, the same way you'd construct it anywhere else.
 ### Requirements (v1)
 
 - `@Mapper` must be attached to a `struct`.
-- The struct must declare **exactly one** explicit initializer. That
-  initializer's parameter list — labels, types, and order — defines the
-  generated builder. Properties not part of that initializer (for example an
-  `id` given a fresh default value inside the initializer body) are left
-  untouched.
+- The struct must declare **exactly one** explicit initializer, *or*, if it
+  declares more than one, exactly one of them must be marked
+  `@MapperCanonical` (see [Multiple initializers](#multiple-initializers)
+  below). That initializer's parameter list — labels, types, and order —
+  defines the generated builder. Properties not part of that initializer
+  (for example an `id` given a fresh default value inside the initializer
+  body) are left untouched.
 - Initializer parameters must be simple `label: Type` parameters: no
   variadics, no unlabeled (`_`) parameters, no parameter packs. Ownership
   specifiers (`consuming`, `borrowing`) on a parameter are supported and
@@ -125,7 +132,29 @@ builder closure, the same way you'd construct it anywhere else.
   (`@escaping`, `@autoclosure`) are also stripped from the field's `Boxed<T>`
   type, while type-level attributes that are part of the type itself (e.g.
   `@MainActor`, `@Sendable` on a function-typed field) are preserved.
-- Generic structs are not yet supported.
+- Generic structs are supported, including `where` clauses and constraints
+  on the generic parameters. `@Mapper` is a *member* macro, so the generated
+  builder initializer and its nested `<Type>Builder` enum sit lexically
+  inside the struct's own body and see its generic parameters the same way
+  any other member would — no extra syntax is needed:
+
+  ```swift
+  @Mapper
+  struct LabeledValue<Value: Equatable>: Equatable {
+      let label: String
+      let value: Value
+
+      init(label: String, value: Value) {
+          self.label = label
+          self.value = value
+      }
+  }
+
+  let count = LabeledValue<Int> { Label, Value in
+      Label { "count" }
+      Value { items.count }
+  }
+  ```
 - Stored `let` properties may **not** declare an in-place default value (e.g.
   `let id: UUID = .init()`) — this is a real Swift compiler limitation (not
   specific to `@Mapper`; see [Known limitations](#known-limitations)) that
@@ -266,17 +295,97 @@ of the struct's fields, if the branch is the closure's sole statement).
 Setting a subset of two-or-more fields conditionally isn't supported — split
 those fields into their own `if`/`else` (or `switch`) blocks instead.
 
+## Multiple initializers
+
+`@Mapper` needs exactly one initializer to define the generated builder's
+fields, but real-world structs sometimes need more than one — a
+hand-written `Decodable.init(from:)`, or a convenience initializer that call
+sites needing the builder never use. Attach `@MapperCanonical` to the
+initializer that should define the generated builder's fields, and
+`@Mapper` uses it while leaving every other initializer on the struct
+completely untouched:
+
+```swift
+@Mapper
+struct User: Decodable {
+    let id: UUID
+    let name: String
+
+    @MapperCanonical
+    init(id: UUID, name: String) {
+        self.id = id
+        self.name = name
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try container.decode(UUID.self, forKey: .id)
+        self.name = try container.decode(String.self, forKey: .name)
+    }
+}
+
+let user = User { Id, Name in
+    Id { UUID() }
+    Name { rawInput.name }
+}
+```
+
+`@MapperCanonical` is a marker only — it never generates any code of its
+own. It has no effect (and isn't required) when a struct declares only a
+single initializer; it only matters once there's more than one to choose
+from. Marking none, or more than one, of a multi-initializer struct's
+initializers is a compile-time error — see [Diagnostics](#diagnostics)
+below.
+
+## Collection fields
+
+A `[Element]`-typed field already works with the plain closure form — it's
+just `Boxed<[Element]>`, and `Boxed<T>` is generic over any `T`:
+
+```swift
+Items { domain.items.map(ItemViewModel.init) }
+```
+
+For a *different* source collection mapped element-by-element, `Boxed`
+also ships a `mapping:` overload so that stays a labeled call instead of a
+bare `.map { }`:
+
+```swift
+@Mapper
+struct Cart: Equatable {
+    let itemTitles: [String]
+
+    init(itemTitles: [String]) {
+        self.itemTitles = itemTitles
+    }
+}
+
+let cart = Cart { ItemTitles in
+    ItemTitles(mapping: domain.items) { domainItem in
+        domainItem.name.capitalized
+    }
+}
+```
+
+This is purely a `Boxed<T>` addition (see `Sources/SwiftMapper/BoxedCollection.swift`)
+— it needed no changes to `@Mapper`'s code generation, since any `Array`-typed
+field already type-checks against plain `Boxed<T>` today.
+
 ## Diagnostics
 
 `@Mapper` reports errors at compile time, pointing at the exact syntax that's
 wrong:
 
 - **Not a struct** — `@Mapper` can only be attached to a struct.
-- **Missing initializer** — the struct must declare exactly one initializer
+- **Missing initializer** — the struct must declare at least one initializer
   whose parameters define the mapped fields.
-- **Multiple initializers** — each initializer beyond the first is flagged
-  individually, at its own location, so you can see exactly which ones to
-  remove or merge.
+- **Multiple initializers** — emitted at every initializer when a struct
+  declares more than one and none of them is marked `@MapperCanonical`,
+  with a **Fix-It** that inserts `@MapperCanonical` above that initializer.
+  See [Multiple initializers](#multiple-initializers) above.
+- **Multiple canonical initializers** — emitted at each initializer marked
+  `@MapperCanonical` when more than one is marked on the same struct; only
+  one is allowed.
 - **Unsupported (variadic) parameters** — not supported by the generated
   builder.
 - **Unlabeled parameters** (`_ name: String`) — flagged with a **Fix-It**
@@ -284,6 +393,11 @@ wrong:
   `_ name: String` into `name name: String`), since that's the fix Xcode can
   apply automatically in nearly every case.
 - **No fields** — the initializer must declare at least one parameter.
+- **Colliding capitalized field labels** — emitted when two initializer
+  parameters capitalize to the same generated builder closure parameter
+  name (for example `name` and `Name`), which would otherwise silently
+  produce an invalid, duplicate-named parameter in the generated builder
+  initializer. Rename one of the two parameters to fix it.
 - **Default-valued `let` property** (error) — emitted when a stored `let`
   property declares an in-place default value (e.g. `let id: UUID = .init()`).
   This always breaks the build once `@Mapper`'s generated builder init is
@@ -386,6 +500,18 @@ struct — keep it on its plain initializer until the upstream bug is fixed.
 swift build
 swift test
 ```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) before opening a PR that adds
+capability rather than fixing something existing — this repo uses a short
+plan/spec convention under `docs/superpowers/` for anything that grows the
+library's surface area.
+
+## Documentation
+
+Full symbol documentation (including this README's examples) renders via
+DocC — open the package in Xcode and build documentation
+(**Product ▸ Build Documentation**), or browse it once published on the
+[Swift Package Index](https://swiftpackageindex.com/sorunokoe/SwiftMapper/documentation).
 
 ## License
 
