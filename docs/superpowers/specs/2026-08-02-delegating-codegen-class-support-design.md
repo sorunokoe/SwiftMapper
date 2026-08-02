@@ -224,9 +224,8 @@ initializers" rule:
    common case (e.g. a `Decodable`-conforming type whose `init(from:)`
    doesn't remotely resemble a memberwise init).
 4. **2+ initializers, none marked, zero or 2+ are memberwise-shaped** —
-   ambiguous; diagnose exactly as today (all candidates, in the 2+ case
-   only the memberwise-shaped candidates, with a Fix-It suggesting
-   `@MapperCanonical`).
+   ambiguous; diagnose exactly as today (every initializer on the type,
+   with a Fix-It suggesting `@MapperCanonical` on each).
 5. **2+ initializers, 2+ marked `@MapperCanonical`** — unchanged, always an
    error.
 
@@ -267,7 +266,9 @@ where today's behavior correctly asks the user to disambiguate.
   the existing member, or don't apply `@Mapper` to this type).
 - **Unchanged in spirit, updated in wording:** `multipleInitializers` now
   fires only for the genuinely ambiguous cases above (zero or 2+
-  memberwise-shaped candidates), still with the same Fix-It.
+  memberwise-shaped candidates), still diagnosing every initializer on the
+  type with the same Fix-It — it does not narrow the diagnosed set to just
+  the memberwise-shaped candidates.
 
 ### Non-goals (unchanged from prior workstreams, plus new ones for this change)
 

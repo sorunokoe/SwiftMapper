@@ -2,6 +2,71 @@ import SwiftDiagnostics
 import SwiftSyntax
 import SwiftSyntaxMacros
 
+/// The two declaration kinds `@Mapper` can attach to. Both `StructDeclSyntax`
+/// and `ClassDeclSyntax` expose everything the rest of this macro needs
+/// (`name`, `memberBlock`, `modifiers`, `inheritanceClause`) but don't share
+/// a protocol that exposes all of those, so this wraps whichever one was
+/// actually attached and forwards the handful of members `expansion` reads.
+private enum MapperTarget {
+    case structDecl(StructDeclSyntax)
+    case classDecl(ClassDeclSyntax)
+
+    init?(_ declaration: some DeclGroupSyntax) {
+        if let structDecl = declaration.as(StructDeclSyntax.self) {
+            self = .structDecl(structDecl)
+        } else if let classDecl = declaration.as(ClassDeclSyntax.self) {
+            self = .classDecl(classDecl)
+        } else {
+            return nil
+        }
+    }
+
+    var name: TokenSyntax {
+        switch self {
+        case let .structDecl(decl): return decl.name
+        case let .classDecl(decl): return decl.name
+        }
+    }
+
+    var memberBlock: MemberBlockSyntax {
+        switch self {
+        case let .structDecl(decl): return decl.memberBlock
+        case let .classDecl(decl): return decl.memberBlock
+        }
+    }
+
+    var modifiers: DeclModifierListSyntax {
+        switch self {
+        case let .structDecl(decl): return decl.modifiers
+        case let .classDecl(decl): return decl.modifiers
+        }
+    }
+
+    var inheritanceClause: InheritanceClauseSyntax? {
+        switch self {
+        case let .structDecl(decl): return decl.inheritanceClause
+        case let .classDecl(decl): return decl.inheritanceClause
+        }
+    }
+
+    /// Whether this target is a class — the generated initializer must be
+    /// `convenience` for classes and a plain `init` for structs.
+    var isClass: Bool {
+        if case .classDecl = self { return true }
+        return false
+    }
+
+    /// The underlying declaration as `Syntax`, for diagnosing at the whole
+    /// declaration (matching where `@Mapper`'s own diagnostics have always
+    /// pointed — the same location `declaration` itself would use).
+    var syntax: Syntax {
+        switch self {
+        case let .structDecl(decl): return Syntax(decl)
+        case let .classDecl(decl): return Syntax(decl)
+        }
+    }
+}
+
 /// Implements the `@Mapper` member macro. See `Mapper.swift` in the
 /// `SwiftMapper` target for the full user-facing documentation and example.
 public struct MapperMacro: MemberMacro {
@@ -10,28 +75,25 @@ public struct MapperMacro: MemberMacro {
         providingMembersOf declaration: some DeclGroupSyntax,
         in context: some MacroExpansionContext
     ) throws -> [DeclSyntax] {
-        guard let structDecl = declaration.as(StructDeclSyntax.self) else {
-            context.diagnose(MapperDiagnostic.notAStruct.diagnose(at: declaration))
+        guard let target = MapperTarget(declaration) else {
+            context.diagnose(MapperDiagnostic.notAStructOrClass.diagnose(at: declaration))
             return []
         }
 
-        let typeName = structDecl.name.text
-
-        warnAboutLikelyEquatableConformanceConflict(in: structDecl, context: context)
-
-        guard !diagnoseDefaultValuedStoredProperties(in: structDecl, context: context) else {
+        if let collidingMember = findExistingBuilderMemberCollision(in: target) {
+            context.diagnose(MapperDiagnostic.existingBuilderMemberCollision.diagnose(at: collidingMember))
             return []
         }
 
-        let initializers = structDecl.memberBlock.members
+        let initializers = target.memberBlock.members
             .compactMap { $0.decl.as(InitializerDeclSyntax.self) }
 
         guard !initializers.isEmpty else {
-            context.diagnose(MapperDiagnostic.missingInitializer.diagnose(at: structDecl))
+            context.diagnose(MapperDiagnostic.missingInitializer.diagnose(at: target.syntax))
             return []
         }
 
-        guard let canonicalInit = resolveCanonicalInitializer(among: initializers, context: context) else {
+        guard let canonicalInit = resolveCanonicalInitializer(among: initializers, target: target, context: context) else {
             return []
         }
 
@@ -94,8 +156,8 @@ public struct MapperMacro: MemberMacro {
             return []
         }
 
-        let accessModifier = structDecl.modifiers.accessModifierPrefix
-        let builderName = "\(typeName)Builder"
+        let accessModifier = target.modifiers.accessModifierPrefix
+        let builderName = "Builder"
 
         let builderClosureParameters = fields
             .map { "        _ \($0.capitalizedLabel): Boxed<\($0.boxedType)>" }
@@ -103,29 +165,60 @@ public struct MapperMacro: MemberMacro {
 
         let creationArguments = fields.map { _ in ".init()" }.joined(separator: ", ")
 
+        // A single field's buildBlock returns the bare value (Swift has no
+        // one-element tuple), so the delegating call binds it to a plain
+        // `let`; two or more fields' buildBlock returns a tuple, destructured
+        // via a tuple `let` pattern. The return type always uses each
+        // field's `boxedType` (already stripped of ownership specifiers and
+        // parameter-only attributes like `@escaping`/`@autoclosure`) rather
+        // than `parameterType` — neither is valid in a function return-type
+        // position (verified: `-> @escaping () -> Int` and
+        // `-> (consuming String, Int)` both fail to compile), even though
+        // `parameterType` is required for `buildBlock`'s own *parameters*.
+        let creationBinding: String
+        let delegatingArguments: String
+        if fields.count == 1 {
+            let onlyField = fields[0]
+            creationBinding = "let \(onlyField.label) = creation(\(creationArguments))"
+            delegatingArguments = "\(onlyField.label): \(onlyField.label)"
+        } else {
+            let bindingNames = fields.map(\.label).joined(separator: ", ")
+            creationBinding = "let (\(bindingNames)) = creation(\(creationArguments))"
+            delegatingArguments = fields
+                .map { "\($0.label): \($0.label)" }
+                .joined(separator: ", ")
+        }
+
+        let buildBlockReturnType = fields.count == 1
+            ? fields[0].boxedType
+            : "(\(fields.map(\.boxedType).joined(separator: ", ")))"
+
+        let initKeyword = target.isClass ? "convenience init" : "init"
+
         let builderInit = """
-        \(accessModifier)init(
+        \(accessModifier)\(initKeyword)(
             @\(builderName)
             _ creation: (
         \(builderClosureParameters)
-            ) -> Self
+            ) -> \(buildBlockReturnType)
         ) {
-            self = creation(\(creationArguments))
+            \(creationBinding)
+            self.init(\(delegatingArguments))
         }
         """
 
         let buildBlockParameters = fields
             .map { "_ \($0.label): \($0.parameterType)" }
             .joined(separator: ", ")
-        let buildBlockArguments = fields
-            .map { "\($0.label): \($0.label)" }
-            .joined(separator: ", ")
+        let buildBlockBody = fields.count == 1
+            ? fields[0].label
+            : "(\(fields.map(\.label).joined(separator: ", ")))"
 
         let builderEnum = """
         @resultBuilder
         \(accessModifier)enum \(builderName) {
-            \(accessModifier)static func buildBlock(\(buildBlockParameters)) -> \(typeName) {
-                \(typeName)(\(buildBlockArguments))
+            \(accessModifier)static func buildBlock(\(buildBlockParameters)) -> \(buildBlockReturnType) {
+                \(buildBlockBody)
             }
 
             \(accessModifier)static func buildBlock<Component>(_ component: Component) -> Component {
@@ -152,14 +245,18 @@ public struct MapperMacro: MemberMacro {
 /// Picks the initializer whose parameter list defines the generated
 /// builder's fields.
 ///
-/// - A struct with exactly one initializer always uses it — `@MapperCanonical`
-///   is a no-op in that case, marked or not.
-/// - A struct with more than one initializer must mark exactly one of them
-///   `@MapperCanonical`; every other initializer is left completely alone.
-///   Zero marked initializers or more than one marked initializer is a
-///   compile-time error, since the field list would otherwise be ambiguous.
+/// - A struct/class with exactly one initializer always uses it —
+///   `@MapperCanonical` is a no-op in that case, marked or not.
+/// - With more than one initializer, `@Mapper` first checks for exactly one
+///   initializer marked `@MapperCanonical` (always wins if present), then
+///   falls back to auto-detecting the "memberwise-shaped" initializer: one
+///   whose parameter labels are an exact set match against the type's own
+///   stored property names. If neither resolves to exactly one candidate,
+///   this is a compile-time error, since the field list would otherwise be
+///   ambiguous.
 private func resolveCanonicalInitializer(
     among initializers: [InitializerDeclSyntax],
+    target: MapperTarget,
     context: some MacroExpansionContext
 ) -> InitializerDeclSyntax? {
     guard initializers.count > 1 else {
@@ -175,30 +272,93 @@ private func resolveCanonicalInitializer(
         return nil
     }
 
-    guard let canonicalInit = markedInitializers.first else {
-        for initializer in initializers {
-            context.diagnose(
-                Diagnostic(
-                    node: Syntax(initializer),
-                    message: MapperDiagnostic.multipleInitializers,
-                    fixIts: [
-                        FixIt(
-                            message: MarkInitializerCanonicalFixIt(),
-                            changes: [
-                                .replace(
-                                    oldNode: Syntax(initializer),
-                                    newNode: Syntax(initializer.markedAsMapperCanonical)
-                                ),
-                            ]
-                        ),
-                    ]
-                )
-            )
-        }
-        return nil
+    if let markedCanonicalInit = markedInitializers.first {
+        return markedCanonicalInit
     }
 
-    return canonicalInit
+    let storedPropertyNames = target.storedInstancePropertyNames
+    let memberwiseShapedInitializers = initializers.filter { initializer in
+        let labels = Set(
+            initializer.signature.parameterClause.parameters.map { $0.firstName.text }
+        )
+        return labels == storedPropertyNames
+    }
+
+    if memberwiseShapedInitializers.count == 1 {
+        return memberwiseShapedInitializers[0]
+    }
+
+    for initializer in initializers {
+        context.diagnose(
+            Diagnostic(
+                node: Syntax(initializer),
+                message: MapperDiagnostic.multipleInitializers,
+                fixIts: [
+                    FixIt(
+                        message: MarkInitializerCanonicalFixIt(),
+                        changes: [
+                            .replace(
+                                oldNode: Syntax(initializer),
+                                newNode: Syntax(initializer.markedAsMapperCanonical)
+                            ),
+                        ]
+                    ),
+                ]
+            )
+        )
+    }
+    return nil
+}
+
+private extension MapperTarget {
+    /// The names of this type's own stored, instance (non-static) properties
+    /// — used only by the auto-detection heuristic in
+    /// `resolveCanonicalInitializer`, never to define the generated
+    /// builder's fields directly (that's still always the canonical
+    /// initializer's parameter list, never property inspection).
+    ///
+    /// A property counts as "stored" here the same way the rest of this file
+    /// already treats it: any `VariableDeclSyntax` binding, regardless of
+    /// `let`/`var` or whether it has an initializer — computed properties
+    /// (those with a `{ get ... }`/`{ get set }` accessor block instead of a
+    /// plain initializer-or-nothing) are excluded, since they aren't part of
+    /// what a memberwise initializer would set.
+    var storedInstancePropertyNames: Set<String> {
+        var names: Set<String> = []
+        for member in memberBlock.members {
+            guard let variable = member.decl.as(VariableDeclSyntax.self),
+                  !variable.modifiers.contains(where: { $0.name.tokenKind == .keyword(.static) })
+            else {
+                continue
+            }
+            for binding in variable.bindings {
+                guard bindingIsStored(binding) else { continue }
+                if let identifier = binding.pattern.as(IdentifierPatternSyntax.self) {
+                    names.insert(identifier.identifier.text)
+                }
+            }
+        }
+        return names
+    }
+}
+
+/// A binding is a stored property (not computed) if it has no accessor
+/// block, or its accessor block is a plain `{ willSet ... }`/`{ didSet ... }`
+/// observer list rather than `{ get ... }`. This mirrors the same
+/// distinction Swift itself makes between stored and computed properties.
+private func bindingIsStored(_ binding: PatternBindingSyntax) -> Bool {
+    guard let accessorBlock = binding.accessorBlock else {
+        return true
+    }
+    switch accessorBlock.accessors {
+    case let .accessors(accessorList):
+        return accessorList.allSatisfy { accessor in
+            accessor.accessorSpecifier.tokenKind == .keyword(.willSet)
+                || accessor.accessorSpecifier.tokenKind == .keyword(.didSet)
+        }
+    case .getter:
+        return false
+    }
 }
 
 private extension InitializerDeclSyntax {
@@ -364,25 +524,28 @@ private extension TypeSyntax {
 }
 
 private extension DeclModifierListSyntax {
-    /// Mirrors the struct's own access level onto generated members. Only
-    /// `public` needs to be forwarded explicitly — `internal` (the default)
-    /// requires no modifier, and the macro does not support wider access
-    /// levels such as `open` on a struct.
+    /// Mirrors the type's own access level onto generated members. Only
+    /// `public`/`open` need to be forwarded explicitly — `internal` (the
+    /// default) requires no modifier. An `open` class (whose access level is
+    /// visible outside the module, same as `public`) still only ever
+    /// generates `public` members here, never `open`: the generated
+    /// `convenience init` and nested `Builder` enum don't need to be
+    /// overridable themselves for the builder DSL to be usable from another
+    /// module.
     var accessModifierPrefix: String {
-        contains { $0.name.tokenKind == .keyword(.public) } ? "public " : ""
+        contains { $0.name.tokenKind == .keyword(.public) || $0.name.tokenKind == .keyword(.open) } ? "public " : ""
     }
 }
 
 private enum MapperDiagnostic: DiagnosticMessage {
-    case notAStruct
+    case notAStructOrClass
     case missingInitializer
     case multipleInitializers
     case multipleCanonicalInitializers
     case unsupportedParameter
     case unlabeledParameter
     case noFields
-    case likelyEquatableConformanceConflict
-    case defaultValuedStoredProperty
+    case existingBuilderMemberCollision
     /// Two initializer parameters capitalize to the same generated builder
     /// closure parameter name (e.g. `value` and `Value`), which would
     /// otherwise silently produce an invalid, duplicate-named parameter in
@@ -391,18 +554,18 @@ private enum MapperDiagnostic: DiagnosticMessage {
 
     var message: String {
         switch self {
-        case .notAStruct:
-            return "@Mapper can only be attached to a struct"
+        case .notAStructOrClass:
+            return "@Mapper can only be attached to a struct or class"
         case .missingInitializer:
-            return "@Mapper requires the struct to declare at least one initializer whose parameters define the mapped fields"
+            return "@Mapper requires the type to declare at least one initializer whose parameters define the mapped fields"
         case .multipleInitializers:
             return """
             @Mapper found more than one initializer; mark exactly one of them @MapperCanonical to tell \
-            @Mapper which initializer's parameters define the mapped fields, or reduce the struct to a \
+            @Mapper which initializer's parameters define the mapped fields, or reduce the type to a \
             single initializer
             """
         case .multipleCanonicalInitializers:
-            return "@Mapper found more than one initializer marked @MapperCanonical; only one is allowed per struct"
+            return "@Mapper found more than one initializer marked @MapperCanonical; only one is allowed per type"
         case .unsupportedParameter:
             return "@Mapper does not support variadic initializer parameters"
         case .unlabeledParameter:
@@ -416,27 +579,11 @@ private enum MapperDiagnostic: DiagnosticMessage {
             generated builder initializer would end up with two parameters sharing that name. Rename one \
             of the two initializer parameters so their capitalized builder labels don't collide.
             """
-        case .defaultValuedStoredProperty:
+        case .existingBuilderMemberCollision:
             return """
-            @Mapper's generated builder initializer reassigns 'self' as a whole (`self = creation(...)`), \
-            which the Swift compiler cannot reconcile with a 'let' property that has an in-place default \
-            value here — it always reports "immutable value may only be initialized once", even though the \
-            property is never touched explicitly. This is a real Swift compiler limitation, not specific to \
-            @Mapper: remove the default value from the declaration (`let x: T`) and set it explicitly inside \
-            the canonical initializer's body instead (`self.x = <default>`), or change `let` to `var` if the \
-            property is meant to be mutable.
-            """
-        case .likelyEquatableConformanceConflict:
-            return """
-            This struct declares its own '==' (or '<'/'hash(into:)') alongside a conformance \
-            that's normally auto-synthesized, which usually means a stored property (often a \
-            function-typed field) isn't itself Equatable/Hashable/Comparable. Combined with \
-            @Mapper, this can trigger a known Swift compiler bug where the compiler reports \
-            "type does not conform to protocol" / "multiple matching functions named '=='" even \
-            though the generated code is correct (swiftlang/swift#70087) — because @Mapper must \
-            declare `names: arbitrary`, which makes the compiler consider that it *might* \
-            generate '==' too. If you hit that error, this struct isn't a good fit for @Mapper \
-            until the upstream bug is fixed — keep it on a plain initializer instead.
+            @Mapper needs to generate a nested type named 'Builder' on this type, but it already \
+            declares its own member named 'Builder'. Rename that member, or don't apply @Mapper to \
+            this type.
             """
         }
     }
@@ -444,15 +591,14 @@ private enum MapperDiagnostic: DiagnosticMessage {
     var diagnosticID: MessageID {
         let id: String
         switch self {
-        case .notAStruct: id = "notAStruct"
+        case .notAStructOrClass: id = "notAStructOrClass"
         case .missingInitializer: id = "missingInitializer"
         case .multipleInitializers: id = "multipleInitializers"
         case .multipleCanonicalInitializers: id = "multipleCanonicalInitializers"
         case .unsupportedParameter: id = "unsupportedParameter"
         case .unlabeledParameter: id = "unlabeledParameter"
         case .noFields: id = "noFields"
-        case .likelyEquatableConformanceConflict: id = "likelyEquatableConformanceConflict"
-        case .defaultValuedStoredProperty: id = "defaultValuedStoredProperty"
+        case .existingBuilderMemberCollision: id = "existingBuilderMemberCollision"
         case .collidingCapitalizedFieldLabels: id = "collidingCapitalizedFieldLabels"
         }
         return MessageID(domain: "SwiftMapper", id: id)
@@ -460,10 +606,8 @@ private enum MapperDiagnostic: DiagnosticMessage {
 
     var severity: DiagnosticSeverity {
         switch self {
-        case .likelyEquatableConformanceConflict:
-            return .warning
-        case .notAStruct, .missingInitializer, .multipleInitializers, .multipleCanonicalInitializers,
-             .unsupportedParameter, .unlabeledParameter, .noFields, .defaultValuedStoredProperty,
+        case .notAStructOrClass, .missingInitializer, .multipleInitializers, .multipleCanonicalInitializers,
+             .unsupportedParameter, .unlabeledParameter, .noFields, .existingBuilderMemberCollision,
              .collidingCapitalizedFieldLabels:
             return .error
         }
@@ -474,76 +618,38 @@ private enum MapperDiagnostic: DiagnosticMessage {
     }
 }
 
-/// Best-effort, syntax-only heuristic for a known Swift compiler bug
-/// (swiftlang/swift#70087): a member macro declaring `names: arbitrary`
-/// makes the compiler consider that it *might* generate `==`/`<`/`hash(into:)`,
-/// which conflicts with a hand-written one and produces a confusing
-/// "does not conform to protocol" error — even though the macro's actual
-/// expansion never touches those names. This can't be detected reliably
-/// (macros only see syntax, not semantics), so it only warns when the
-/// telltale shape is present: the struct declares `Equatable`, `Hashable`,
-/// or `Comparable` *and* already hand-writes one of their witnesses (which
-/// is normally unnecessary, since the compiler auto-synthesizes them).
-private func warnAboutLikelyEquatableConformanceConflict(
-    in structDecl: StructDeclSyntax,
-    context: some MacroExpansionContext
-) {
-    let conformanceNames: Set<String> = ["Equatable", "Hashable", "Comparable"]
-    let declaresRelevantConformance = structDecl.inheritanceClause?.inheritedTypes.contains { inherited in
-        guard let name = inherited.type.as(IdentifierTypeSyntax.self)?.name.text else {
-            return false
+/// Whether `target` already declares its own member (of any kind — type,
+/// property, function, case) literally named `Builder`. Only possible since
+/// the generated nested result-builder enum's name became fixed (`Builder`)
+/// instead of derived from the attached type's own name — a type-specific
+/// name could never collide with itself. Returns the first colliding
+/// member's name token, for diagnosing at its exact location.
+private func findExistingBuilderMemberCollision(in target: MapperTarget) -> TokenSyntax? {
+    for member in target.memberBlock.members {
+        if let nestedStruct = member.decl.as(StructDeclSyntax.self), nestedStruct.name.text == "Builder" {
+            return nestedStruct.name
         }
-        return conformanceNames.contains(name)
-    } ?? false
-
-    guard declaresRelevantConformance else {
-        return
-    }
-
-    let declaresHandWrittenWitness = structDecl.memberBlock.members.contains { member in
-        if let function = member.decl.as(FunctionDeclSyntax.self) {
-            let name = function.name.text
-            return name == "==" || name == "<" || name == "hash"
+        if let nestedClass = member.decl.as(ClassDeclSyntax.self), nestedClass.name.text == "Builder" {
+            return nestedClass.name
         }
-        return false
-    }
-
-    guard declaresHandWrittenWitness else {
-        return
-    }
-
-    context.diagnose(MapperDiagnostic.likelyEquatableConformanceConflict.diagnose(at: structDecl))
-}
-
-/// Detects a real, deterministic (not heuristic) Swift compiler limitation:
-/// a stored `let` property declared with an in-place default value (e.g.
-/// `let id: UUID = .init()`) can never be touched — explicitly or via a
-/// whole-`self` reassignment — by any initializer other than the implicit
-/// default-value prologue, or the compiler reports "immutable value may
-/// only be initialized once". Since `@Mapper`'s generated builder init
-/// always does `self = creation(...)`, any such property always breaks the
-/// build. This is unrelated to macros in general (it reproduces with plain
-/// hand-written structs too), so it's diagnosed as a hard error rather than
-/// a best-effort warning. Returns `true` (and diagnoses) if the struct
-/// cannot be expanded because of this.
-private func diagnoseDefaultValuedStoredProperties(
-    in structDecl: StructDeclSyntax,
-    context: some MacroExpansionContext
-) -> Bool {
-    var foundOffendingProperty = false
-    for member in structDecl.memberBlock.members {
-        guard let variable = member.decl.as(VariableDeclSyntax.self),
-              variable.bindingSpecifier.tokenKind == .keyword(.let)
-        else {
-            continue
+        if let nestedEnum = member.decl.as(EnumDeclSyntax.self), nestedEnum.name.text == "Builder" {
+            return nestedEnum.name
         }
-
-        for binding in variable.bindings where binding.initializer != nil {
-            context.diagnose(MapperDiagnostic.defaultValuedStoredProperty.diagnose(at: binding))
-            foundOffendingProperty = true
+        if let typealiasDecl = member.decl.as(TypeAliasDeclSyntax.self), typealiasDecl.name.text == "Builder" {
+            return typealiasDecl.name
+        }
+        if let variable = member.decl.as(VariableDeclSyntax.self) {
+            for binding in variable.bindings {
+                if let identifier = binding.pattern.as(IdentifierPatternSyntax.self), identifier.identifier.text == "Builder" {
+                    return identifier.identifier
+                }
+            }
+        }
+        if let function = member.decl.as(FunctionDeclSyntax.self), function.name.text == "Builder" {
+            return function.name
         }
     }
-    return foundOffendingProperty
+    return nil
 }
 
 /// The Fix-It offered alongside `MapperDiagnostic.unlabeledParameter`: when

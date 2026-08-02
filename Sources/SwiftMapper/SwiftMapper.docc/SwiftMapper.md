@@ -1,15 +1,16 @@
 # ``SwiftMapper``
 
-A tiny Swift macro that turns a struct's own initializer into a composable,
-type-safe "field builder" DSL — without a runtime combinator library, and
-without hand-writing a `@resultBuilder` for every type you map into.
+A tiny Swift macro that turns a struct or class's own initializer into a
+composable, type-safe "field builder" DSL — without a runtime combinator
+library, and without hand-writing a `@resultBuilder` for every type you map
+into.
 
 ## Overview
 
-Attach ``Mapper()`` to a struct and its own canonical initializer becomes a
-labeled, compile-time-checked builder closure: every field must be supplied,
-in the right type, with zero runtime cost (no protocol witnesses, no boxed
-existentials, no reflection).
+Attach ``Mapper()`` to a struct or class and its own canonical initializer
+becomes a labeled, compile-time-checked builder closure: every field must be
+supplied, in the right type, with zero runtime cost (no protocol witnesses,
+no boxed existentials, no reflection).
 
 ```swift
 @Mapper
@@ -41,6 +42,13 @@ There is no runtime combinator layer and no validation/error-accumulation
 framework hiding behind the macro — everything it generates is ordinary,
 inspectable Swift you could have hand-written yourself.
 
+If a type declares more than one initializer, ``Mapper()`` first tries to
+auto-detect the memberwise-shaped one (an initializer whose parameter labels
+exactly match the type's stored properties) as canonical. ``MapperCanonical()``
+only needs to be attached explicitly when that auto-detection is ambiguous —
+for example, when a type has several initializers and none, or more than
+one, matches its stored properties exactly.
+
 ## Topics
 
 ### Attaching the macro
@@ -54,5 +62,5 @@ inspectable Swift you could have hand-written yourself.
 
 ### Guides
 
-For generics, multiple initializers, collection fields, branching, and the
-full diagnostics list, see the project README.
+For generics, class support, multiple initializers, collection fields,
+branching, and the full diagnostics list, see the project README.

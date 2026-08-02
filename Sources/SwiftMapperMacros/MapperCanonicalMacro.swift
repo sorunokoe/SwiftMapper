@@ -6,9 +6,10 @@ import SwiftSyntaxMacros
 ///
 /// `@MapperCanonical` never generates any code of its own — it only needs
 /// to exist as a real macro so the attribute is valid Swift syntax.
-/// `MapperMacro` looks for its presence directly on a struct's initializer
-/// declarations (via `AttributeListSyntax`) to decide which initializer is
-/// canonical when the struct declares more than one.
+/// `MapperMacro` looks for its presence directly on a struct's or class's
+/// initializer declarations (via `AttributeListSyntax`) to decide which
+/// initializer is canonical when the type declares more than one and
+/// auto-detection can't resolve the ambiguity on its own.
 public struct MapperCanonicalMacro: PeerMacro {
     public static func expansion(
         of node: AttributeSyntax,

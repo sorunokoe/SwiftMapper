@@ -117,14 +117,21 @@ builder closure, the same way you'd construct it anywhere else.
 
 ### Requirements (v1)
 
-- `@Mapper` must be attached to a `struct`.
-- The struct must declare **exactly one** explicit initializer, *or*, if it
-  declares more than one, exactly one of them must be marked
-  `@MapperCanonical` (see [Multiple initializers](#multiple-initializers)
-  below). That initializer's parameter list — labels, types, and order —
-  defines the generated builder. Properties not part of that initializer
-  (for example an `id` given a fresh default value inside the initializer
-  body) are left untouched.
+- `@Mapper` must be attached to a `struct` or `class`.
+- The type must declare **exactly one** explicit initializer, *or*, if it
+  declares more than one, either exactly one of them must be marked
+  `@MapperCanonical`, or exactly one of them must be "memberwise-shaped" —
+  its parameter labels are an exact set match against the type's own stored
+  property names — which `@Mapper` auto-detects with no marker needed (see
+  [Multiple initializers](#multiple-initializers) below). That
+  initializer's parameter list — labels, types, and order — defines the
+  generated builder. Properties not part of that initializer (for example
+  an `id` given a fresh default value inside the initializer body) are left
+  untouched.
+- For a class, the generated additive initializer is always a `convenience
+  init` delegating to the class's own designated (canonical) initializer —
+  `@Mapper` never generates a designated initializer, so it never needs to
+  know about a superclass's `super.init(...)` call.
 - Initializer parameters must be simple `label: Type` parameters: no
   variadics, no unlabeled (`_`) parameters, no parameter packs. Ownership
   specifiers (`consuming`, `borrowing`) on a parameter are supported and
@@ -134,9 +141,9 @@ builder closure, the same way you'd construct it anywhere else.
   `@MainActor`, `@Sendable` on a function-typed field) are preserved.
 - Generic structs are supported, including `where` clauses and constraints
   on the generic parameters. `@Mapper` is a *member* macro, so the generated
-  builder initializer and its nested `<Type>Builder` enum sit lexically
-  inside the struct's own body and see its generic parameters the same way
-  any other member would — no extra syntax is needed:
+  builder initializer and its nested `Builder` enum sit lexically inside the
+  type's own body and see its generic parameters the same way any other
+  member would — no extra syntax is needed:
 
   ```swift
   @Mapper
@@ -155,16 +162,8 @@ builder closure, the same way you'd construct it anywhere else.
       Value { items.count }
   }
   ```
-- Stored `let` properties may **not** declare an in-place default value (e.g.
-  `let id: UUID = .init()`) — this is a real Swift compiler limitation (not
-  specific to `@Mapper`; see [Known limitations](#known-limitations)) that
-  makes any additional initializer touching that property fail to compile.
-  `@Mapper` detects this and raises a compile-time error with guidance; the
-  fix is to declare the property without a default (`let id: UUID`) and set
-  it explicitly inside the canonical initializer's body instead.
-- See [Known limitations](#known-limitations) for a specific, unavoidable
-  Swift compiler interaction to be aware of when a field type isn't itself
-  `Equatable`/`Hashable`/`Comparable`.
+- The type must not already declare its own member named `Builder` — that's
+  the name the generated nested result-builder enum always uses.
 
 These constraints are intentionally narrow for v1 — see
 [Non-goals](#non-goals) for why.
@@ -178,20 +177,21 @@ additive initializer, and a matching `@resultBuilder` enum.
 ```swift
 extension Address {
     init(
-        @AddressBuilder
+        @Builder
         _ creation: (
             _ Street: Boxed<String>,
             _ City: Boxed<String>,
             _ PostalCode: Boxed<String>
-        ) -> Self
+        ) -> (String, String, String)
     ) {
-        self = creation(.init(), .init(), .init())
+        let (street, city, postalCode) = creation(.init(), .init(), .init())
+        self.init(street: street, city: city, postalCode: postalCode)
     }
 
     @resultBuilder
-    enum AddressBuilder {
-        static func buildBlock(_ street: String, _ city: String, _ postalCode: String) -> Address {
-            Address(street: street, city: city, postalCode: postalCode)
+    enum Builder {
+        static func buildBlock(_ street: String, _ city: String, _ postalCode: String) -> (String, String, String) {
+            (street, city, postalCode)
         }
 
         static func buildBlock<Component>(_ component: Component) -> Component {
@@ -298,12 +298,45 @@ those fields into their own `if`/`else` (or `switch`) blocks instead.
 ## Multiple initializers
 
 `@Mapper` needs exactly one initializer to define the generated builder's
-fields, but real-world structs sometimes need more than one — a
-hand-written `Decodable.init(from:)`, or a convenience initializer that call
-sites needing the builder never use. Attach `@MapperCanonical` to the
-initializer that should define the generated builder's fields, and
-`@Mapper` uses it while leaving every other initializer on the struct
-completely untouched:
+fields, but real-world types sometimes need more than one — a hand-written
+`Decodable.init(from:)`, or a convenience initializer that call sites
+needing the builder never use. When that happens, `@Mapper` first tries to
+auto-detect which initializer is canonical: if exactly one initializer's
+parameter labels are an exact set match against the type's own stored
+property names, that one is used automatically, no marker required:
+
+```swift
+@Mapper
+struct User: Decodable {
+    let id: UUID
+    let name: String
+
+    // Auto-detected: its labels exactly match this type's stored
+    // properties, and init(from:) clearly isn't a candidate.
+    init(id: UUID, name: String) {
+        self.id = id
+        self.name = name
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try container.decode(UUID.self, forKey: .id)
+        self.name = try container.decode(String.self, forKey: .name)
+    }
+}
+
+let user = User { Id, Name in
+    Id { UUID() }
+    Name { rawInput.name }
+}
+```
+
+If auto-detection can't find exactly one unambiguous candidate — for
+example, two initializers whose labels both happen to match the stored
+properties (just reordered) — attach `@MapperCanonical` to the initializer
+that should define the generated builder's fields. It always takes priority
+over auto-detection, and every other initializer is left completely
+untouched:
 
 ```swift
 @Mapper
@@ -323,19 +356,14 @@ struct User: Decodable {
         self.name = try container.decode(String.self, forKey: .name)
     }
 }
-
-let user = User { Id, Name in
-    Id { UUID() }
-    Name { rawInput.name }
-}
 ```
 
 `@MapperCanonical` is a marker only — it never generates any code of its
-own. It has no effect (and isn't required) when a struct declares only a
-single initializer; it only matters once there's more than one to choose
-from. Marking none, or more than one, of a multi-initializer struct's
-initializers is a compile-time error — see [Diagnostics](#diagnostics)
-below.
+own. It has no effect (and isn't required) when a type declares only a
+single initializer. Marking more than one initializer `@MapperCanonical` on
+the same type is a compile-time error, and so is the rare case where
+auto-detection also can't find exactly one unambiguous candidate — see
+[Diagnostics](#diagnostics) below.
 
 ## Collection fields
 
@@ -376,15 +404,17 @@ field already type-checks against plain `Boxed<T>` today.
 `@Mapper` reports errors at compile time, pointing at the exact syntax that's
 wrong:
 
-- **Not a struct** — `@Mapper` can only be attached to a struct.
-- **Missing initializer** — the struct must declare at least one initializer
+- **Not a struct or class** — `@Mapper` can only be attached to a struct or
+  class.
+- **Missing initializer** — the type must declare at least one initializer
   whose parameters define the mapped fields.
-- **Multiple initializers** — emitted at every initializer when a struct
-  declares more than one and none of them is marked `@MapperCanonical`,
-  with a **Fix-It** that inserts `@MapperCanonical` above that initializer.
-  See [Multiple initializers](#multiple-initializers) above.
+- **Multiple initializers** — emitted at every initializer when a type
+  declares more than one, none of them is marked `@MapperCanonical`, and
+  auto-detection can't find exactly one unambiguous memberwise-shaped
+  candidate, with a **Fix-It** that inserts `@MapperCanonical` above each
+  initializer. See [Multiple initializers](#multiple-initializers) above.
 - **Multiple canonical initializers** — emitted at each initializer marked
-  `@MapperCanonical` when more than one is marked on the same struct; only
+  `@MapperCanonical` when more than one is marked on the same type; only
   one is allowed.
 - **Unsupported (variadic) parameters** — not supported by the generated
   builder.
@@ -398,101 +428,10 @@ wrong:
   name (for example `name` and `Name`), which would otherwise silently
   produce an invalid, duplicate-named parameter in the generated builder
   initializer. Rename one of the two parameters to fix it.
-- **Default-valued `let` property** (error) — emitted when a stored `let`
-  property declares an in-place default value (e.g. `let id: UUID = .init()`).
-  This always breaks the build once `@Mapper`'s generated builder init is
-  added — see [Known limitations](#known-limitations) for why, and how to fix
-  it.
-- **Likely `Equatable`/`Hashable`/`Comparable` conflict** (warning, not an
-  error) — emitted when the struct conforms to one of those protocols *and*
-  already hand-writes `==`/`<`/`hash(into:)` itself. This shape can trigger a
-  known Swift compiler bug when combined with `@Mapper` — see
-  [Known limitations](#known-limitations).
-
-## Known limitations
-
-### Stored `let` properties can't have an in-place default value
-
-A stored `let` property declared with an in-place default value, e.g.:
-
-```swift
-struct Chart: Identifiable {
-    let id: UUID = .init()
-    let value: String
-    ...
-}
-```
-
-can never be assigned by any initializer other than the implicit default-value
-prologue Swift inserts for it — not even by explicitly writing `self.id = ...`
-in your own initializer, and not by a whole-`self` reassignment like
-`self = other`. Any attempt produces:
-
-```
-error: immutable value 'self.id' may only be initialized once
-```
-
-**This is a genuine Swift compiler limitation, unrelated to macros or
-`@Mapper`** — it reproduces with a plain, hand-written struct and no macros at
-all. `@Mapper`'s generated builder initializer always does
-`self = creation(...)` to assemble the full value from the builder closure, so
-any struct with this shape will always fail to compile once `@Mapper` is
-attached.
-
-**Fix**: don't give the property an in-place default. Declare it without one
-and set it explicitly inside the canonical initializer's body instead:
-
-```swift
-struct Chart: Identifiable {
-    let id: UUID
-    let value: String
-
-    init(value: String) {
-        self.id = .init()
-        self.value = value
-    }
-}
-```
-
-`@Mapper` detects this shape deterministically (unlike the Equatable case
-below, this isn't a heuristic — it's always broken) and raises a compile-time
-**error** pointing at the offending property.
-
-### `Equatable`/`Hashable`/`Comparable` conflict with a hand-written witness
-
-If a struct conforms to `Equatable`, `Hashable`, or `Comparable` **and** hand-writes
-its own `==`, `hash(into:)`, or `<` (typically because a stored field — often a
-function type — isn't itself Equatable/Hashable/Comparable, so the compiler
-can't auto-synthesize the witness), attaching `@Mapper` to that struct can
-trigger a **Swift compiler bug**, not a SwiftMapper bug:
-[swiftlang/swift#70087](https://github.com/swiftlang/swift/issues/70087).
-
-The symptom is a confusing compiler error even though the macro-generated code
-is correct:
-
-```
-error: type 'Chart' does not conform to protocol 'Equatable'
-note: multiple matching functions named '==' with type '(Chart, Chart) -> Bool'
-note: candidate exactly matches
-note: candidate exactly matches
-```
-
-**Root cause**: `@Mapper` must declare `@attached(member, names: arbitrary)`
-(the generated builder init and `<Type>Builder` enum name depend on the
-attached type's name, so the fixed `names: named(...)` list Swift macros can
-otherwise use isn't expressible). Declaring `names: arbitrary` makes the
-compiler treat `==`/`<`/`hash(into:)` as names the macro *might* generate —
-even though `@Mapper` never actually generates them — which conflicts with
-protocol-conformance synthesis for a hand-written witness. This reproduces
-identically whether the macro is a `member` or an `extension` macro, and is
-unrelated to anything project-specific; it's an upstream Swift toolchain
-issue with no available workaround at the macro-author level as of this
-writing.
-
-`@Mapper` detects this specific shape (best-effort, syntax-only — it can't see
-whether a field type is actually Equatable) and emits a **warning** pointing
-here. If you hit the actual compiler error, **don't apply `@Mapper`** to that
-struct — keep it on its plain initializer until the upstream bug is fixed.
+- **Existing `Builder` member collision** — emitted when the type already
+  declares its own member named `Builder`, which is the fixed name the
+  generated nested result-builder enum always uses. Rename that member, or
+  don't apply `@Mapper` to this type.
 
 ## Development
 
