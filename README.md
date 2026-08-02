@@ -24,7 +24,8 @@ Hand-written data mappers tend to collapse into one of two shapes:
 
 SwiftMapper takes a third path: keep each field's mapping logic as a small,
 labeled, ordinary closure, and let the compiler check that every field is
-supplied, in the right shape, at compile time — with zero runtime cost.
+supplied, in the right shape, at compile time — with zero runtime cost (see
+[Performance](#performance)).
 
 ```swift
 @Mapper
@@ -218,6 +219,31 @@ wrapper whose only job is to give each closure parameter a readable name via
 `callAsFunction`, so `Street { ... }` reads like a keyword but is just an
 ordinary function call. Your existing, plain initializer is left completely
 untouched — the builder initializer is purely additive.
+
+## Performance
+
+The builder DSL is designed to compile away to nothing more than your own
+plain initializer call, with no cost added on top:
+
+- `Boxed<T>` has no stored properties — it exists purely to give a builder
+  closure parameter a readable name — so it's zero-sized and trivially
+  copyable. It's also marked `@frozen`, so even a consumer building against
+  SwiftMapper with library evolution enabled (an XCFramework, for example)
+  gets the same fully-optimized layout as an ordinary source dependency.
+- Every `Boxed<T>` method is `@inlinable` **and** `@inline(__always)`, so
+  `Profile { ... }` and `ItemTitles(mapping:_:) { ... }` calls have no
+  function-call overhead in *any* build configuration — not just under
+  `-O`, but in ordinary unoptimized debug builds too.
+- The generated builder initializer and `Builder` result-builder enum
+  compile directly into your own module (this is a *member* macro, not a
+  separate runtime layer), so the compiler's ordinary optimizer sees straight
+  through them to your plain initializer call — there's no indirection left
+  for `-O` to optimize away, because there was never any to begin with.
+- The generated code is always fully type-annotated (every `buildBlock`
+  parameter and return type is spelled out explicitly), which keeps the
+  type checker's work on a builder closure linear in its field count instead
+  of relying on tuple-literal type inference — a common source of slow
+  compiles in hand-written result-builder code.
 
 ## Non-goals
 
