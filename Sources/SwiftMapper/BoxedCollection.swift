@@ -27,7 +27,12 @@ extension Boxed {
     /// This only participates in overload resolution when this `Boxed<T>`'s
     /// field type `T` is itself an `Array<Element>` — for any other field
     /// type, only the plain `callAsFunction(_:)` closure form applies.
+    ///
+    /// `@inline(__always)`, matching `Boxed.callAsFunction(_:)`: this is a
+    /// single-statement forward to `Sequence.map`, so forcing inlining keeps
+    /// it free of call overhead in `-Onone` builds too, not only under `-O`.
     @inlinable
+    @inline(__always)
     public func callAsFunction<Source: Sequence, Element>(
         mapping source: Source,
         _ transform: (Source.Element) -> Element

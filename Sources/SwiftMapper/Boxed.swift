@@ -21,13 +21,27 @@
 /// You will not normally construct `Boxed<T>` yourself — the `@Mapper` macro
 /// generates initializers that create one `Boxed<T>` per stored field and
 /// pass them into your builder closure.
+///
+/// `Boxed<T>` is `@frozen` because it is guaranteed to never gain a stored
+/// property — its whole point is to carry no state — which lets it fully
+/// optimize across module boundaries even in a library-evolution
+/// (resilient) build: the compiler can see its (empty) layout and inline
+/// through it instead of going through a resilient-witness call.
+@frozen
 public struct Boxed<T>: Sendable {
     @inlinable
+    @inline(__always)
     public init() {}
 
     /// Invokes `creation` and returns its result. This is what allows a
     /// `Boxed<T>` value to be "called" like a function: `Profile { ... }`.
+    ///
+    /// Marked `@inline(__always)` (in addition to `@inlinable`) since this
+    /// is a single-statement forwarding call executed once per mapped
+    /// field: forcing inlining keeps it free of call overhead even in
+    /// unoptimized (`-Onone`) debug builds, not only under `-O`.
     @inlinable
+    @inline(__always)
     public func callAsFunction(_ creation: () -> T) -> T {
         creation()
     }
