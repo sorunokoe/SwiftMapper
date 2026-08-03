@@ -232,6 +232,79 @@ untouched — the builder initializer is purely additive.
   initializer next to a struct you've already written; it never generates
   your model types.
 
+## Composing smaller rules with `Mapping`
+
+`@Mapper` solves the "one struct, several fields" problem. `Mapping` is a
+complementary, much smaller piece that solves a different problem: what does
+a single field's mapping *logic* look like once it outgrows one line, so it
+doesn't collapse back into a private helper method buried in the mapper
+class?
+
+```swift
+public protocol Mapping<Input, Output> {
+    associatedtype Input
+    associatedtype Output
+    func map(_ input: Input) -> Output
+}
+```
+
+That's the entire protocol — deliberately mirroring `View.body`: one
+requirement, no combinators, no environment. A conforming type is either:
+
+- **Pure** (no stored properties) — construct it right at the call site, the
+  same way `Text("x")` needs no injection:
+
+  ```swift
+  struct TournamentTypeToPresentationMapper: Mapping {
+      func map(_ input: DomainTournamentType) -> TournamentType {
+          switch input {
+          case .bullsEye: .bullsEye
+          case .puttPutt: .puttPutt
+          // ...
+          }
+      }
+  }
+
+  TournamentType { TournamentTypeToPresentationMapper().map(domain.tournamentType) }
+  ```
+
+- **Context-needing** — has explicit, constructor-injected collaborators,
+  the same pattern any other dependency-consuming mapper already uses. Bundle
+  a small `Input` type when a rule needs more than one value:
+
+  ```swift
+  struct TournamentInfoBannerToPresentationMapper: Mapping {
+      struct Input {
+          let eventStatus: DomainEventStatus
+          let playerPosition: DomainPlayerPosition
+      }
+
+      let placementBannerMapper: PlacementBannerToPresentationMapper
+      let scheduledToTagTextMapper: ScheduledStatusToTagTextPresentationMapper
+
+      func map(_ input: Input) -> InfoCardBarArrangement { /* ... */ }
+  }
+  ```
+
+`Mapping` and `@Mapper` compose freely — a `Mapping` rule's `map(_:)` body is
+an ordinary place to call an `@Mapper`-generated builder initializer, and a
+builder closure field is an ordinary place to construct and call a `Mapping`
+rule. Neither requires the other.
+
+### `Mapping` non-goals
+
+- **No combinator operators.** No `.pullback`, `.map`, or chaining API —
+  see [Non-goals](#non-goals) above; `Mapping` doesn't change that.
+- **No ambient/environment-style dependency resolution.** Per
+  [`CONTRIBUTING.md`](CONTRIBUTING.md), context/dependency parameters must be
+  threaded explicitly. `Mapping` is a naming/shape convention, not a DI
+  container — a pure rule needs no injection because it has nothing to
+  inject, not because of a hidden lookup mechanism.
+- **Not retrofitted onto every existing mapper.** Adopt it for new,
+  genuinely single-input leaf rules; a mapper whose natural shape takes
+  several labeled parameters, or that dispatches across a sealed type before
+  delegating to a specialized rule, keeps that shape.
+
 ## Branching
 
 `if`/`else` and `switch` can appear **directly** inside a builder closure —
