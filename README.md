@@ -232,31 +232,35 @@ untouched — the builder initializer is purely additive.
   initializer next to a struct you've already written; it never generates
   your model types.
 
-## Composing smaller rules with `Mapping`
+## Composing smaller rules with `Rule`
 
-`@Mapper` solves the "one struct, several fields" problem. `Mapping` is a
+`@Mapper` solves the "one struct, several fields" problem. `Rule` is a
 complementary, much smaller piece that solves a different problem: what does
 a single field's mapping *logic* look like once it outgrows one line, so it
 doesn't collapse back into a private helper method buried in the mapper
 class?
 
 ```swift
-public protocol Mapping<Input, Output> {
+public protocol Rule<Input, Output> {
     associatedtype Input
     associatedtype Output
-    func map(_ input: Input) -> Output
+    var input: Input { get }
+    var body: Output { get }
 }
 ```
 
 That's the entire protocol — deliberately mirroring `View.body`: one
-requirement, no combinators, no environment. A conforming type is either:
+computed-property requirement, no combinators, no environment. A conforming
+type is either:
 
-- **Pure** (no stored properties) — construct it right at the call site, the
-  same way `Text("x")` needs no injection:
+- **Pure** (no stored dependencies beyond `input`) — construct it right at
+  the call site, the same way `Text("x")` needs no injection:
 
   ```swift
-  struct TournamentTypeToPresentationMapper: Mapping {
-      func map(_ input: DomainTournamentType) -> TournamentType {
+  struct TournamentTypeRule: Rule {
+      let input: DomainTournamentType
+
+      var body: TournamentType {
           switch input {
           case .bullsEye: .bullsEye
           case .puttPutt: .puttPutt
@@ -265,41 +269,61 @@ requirement, no combinators, no environment. A conforming type is either:
       }
   }
 
-  TournamentType { TournamentTypeToPresentationMapper().map(domain.tournamentType) }
+  TournamentType { TournamentTypeRule(input: domain.tournamentType).body }
   ```
 
-- **Context-needing** — has explicit, constructor-injected collaborators,
-  the same pattern any other dependency-consuming mapper already uses. Bundle
-  a small `Input` type when a rule needs more than one value:
+- **Context-needing** — has explicit, constructor-injected collaborators
+  alongside `input`, the same pattern any other dependency-consuming mapper
+  already uses. Bundle a small `Input` type when a rule needs more than one
+  value:
 
   ```swift
-  struct TournamentInfoBannerToPresentationMapper: Mapping {
+  struct TournamentInfoBannerRule: Rule {
       struct Input {
           let eventStatus: DomainEventStatus
           let playerPosition: DomainPlayerPosition
       }
 
+      let input: Input
       let placementBannerMapper: PlacementBannerToPresentationMapper
       let scheduledToTagTextMapper: ScheduledStatusToTagTextPresentationMapper
 
-      func map(_ input: Input) -> InfoCardBarArrangement { /* ... */ }
+      var body: InfoCardBarArrangement { /* ... */ }
   }
   ```
 
-`Mapping` and `@Mapper` compose freely — a `Mapping` rule's `map(_:)` body is
-an ordinary place to call an `@Mapper`-generated builder initializer, and a
-builder closure field is an ordinary place to construct and call a `Mapping`
-rule. Neither requires the other.
+`Rule` and `@Mapper` compose freely — a `Rule`'s `body` is an ordinary place
+to construct and read an `@Mapper`-generated builder initializer, and a
+builder closure field is an ordinary place to construct a `Rule` and read
+its `body`. Neither requires the other.
 
-### `Mapping` non-goals
+### Why `body` and not `map(_:)`
+
+An earlier version of this protocol used a single `func map(_ input: Input)
+-> Output` requirement instead. It was reshaped to store `input` and expose
+`body` as a computed property to read closer to SwiftUI's own vocabulary.
+Two more literal readings of "make it exactly like `View`" were considered
+and rejected along the way — a recursive `var body: some Rule { ... }` with
+sub-rules walked by a framework (this only works in real SwiftUI because the
+*runtime* privately resolves `some View`; replicating it here means writing
+that walker ourselves — exactly the runtime combinator/engine this library
+rejects below), and zero-argument leaf construction relying on a framework
+to supply `input` ambiently (environment-style implicit DI, forbidden by
+`CONTRIBUTING.md`'s explicit-threading rule). `Rule` keeps the part that's
+achievable without an engine or ambient lookup: `body` as a computed
+property, `input` always threaded in explicitly.
+
+### `Rule` non-goals
 
 - **No combinator operators.** No `.pullback`, `.map`, or chaining API —
-  see [Non-goals](#non-goals) above; `Mapping` doesn't change that.
-- **No ambient/environment-style dependency resolution.** Per
+  see [Non-goals](#non-goals) above; `Rule` doesn't change that.
+- **No recursive `Rule`-typed `body` walked by a framework, and no ambient/
+  environment-style dependency resolution.** Per
   [`CONTRIBUTING.md`](CONTRIBUTING.md), context/dependency parameters must be
-  threaded explicitly. `Mapping` is a naming/shape convention, not a DI
-  container — a pure rule needs no injection because it has nothing to
-  inject, not because of a hidden lookup mechanism.
+  threaded explicitly. `Rule` is a naming/shape convention, not a DI
+  container or a rendering engine — a pure rule needs no injection because
+  it has nothing to inject beyond its own `input`, not because of a hidden
+  lookup mechanism.
 - **Not retrofitted onto every existing mapper.** Adopt it for new,
   genuinely single-input leaf rules; a mapper whose natural shape takes
   several labeled parameters, or that dispatches across a sealed type before
