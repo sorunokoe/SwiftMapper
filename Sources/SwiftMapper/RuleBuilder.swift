@@ -60,6 +60,18 @@ public enum RuleBuilder<Output> {
         rule.body
     }
 
+    /// The same as the overload above, but for a `body` whose `Output` is `Optional` of a
+    /// child rule's (non-optional) `Output` — e.g. one `switch` branch delegates to a rule
+    /// producing `SomeData`, while `body` itself returns `SomeData?` (another branch
+    /// contributing a bare `nil`). Swift's usual implicit-Optional-promotion (the same rule
+    /// that lets `let x: Int? = condition ? 5 : nil` compile) doesn't automatically extend
+    /// into a result builder's generic `buildExpression` — this overload restores it for the
+    /// one case this library actually needs: an Optional-returning `Rule` composed from
+    /// non-optional child rules.
+    public static func buildExpression<R: Rule>(_ rule: R) -> Output where Output == R.Output? {
+        rule.body
+    }
+
     public static func buildBlock(_ component: Output) -> Output {
         component
     }
