@@ -61,6 +61,18 @@ private struct PersonLabelRuleWithoutExplicitBody: Rule {
     }
 }
 
+// Same as `PersonLabelRuleWithoutExplicitBody` above, but composing a child `Rule` directly
+// inside its own `body` (no `@Mapper` builder field involved) via a throwaway `Boxed()`
+// constructed on the spot — demonstrating the direct-value `callAsFunction` overload lets a
+// `Rule`'s own `body` tail-delegate to a child rule with no explicit `.body`.
+private struct ShoutingGreetingRule: Rule {
+    let input: String
+
+    var body: String {
+        Boxed()(UppercasingRule(input: input))
+    }
+}
+
 @Suite("Rule protocol")
 struct RuleTests {
     @Test("A pure Rule conformance can be constructed inline with no stored dependencies beyond input")
@@ -85,5 +97,10 @@ struct RuleTests {
     @Test("Boxed resolves a Rule's body automatically, so a builder field needs no explicit .body")
     func boxedResolvesRuleBodyWithNoExplicitBody() {
         #expect(PersonLabelRuleWithoutExplicitBody(input: "grace").body == PersonLabel(name: "GRACE"))
+    }
+
+    @Test("A throwaway Boxed() resolves a child Rule's body with no explicit .body, outside a builder field")
+    func boxedResolvesRuleValueDirectlyOutsideBuilderField() {
+        #expect(ShoutingGreetingRule(input: "ada").body == "ADA")
     }
 }

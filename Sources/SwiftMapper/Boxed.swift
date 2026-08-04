@@ -25,9 +25,22 @@
 /// DateBanner { TournamentInfoBannerRule(input: .init(eventStatus: status, playerPosition: position)) }
 /// ```
 ///
-/// You will not normally construct `Boxed<T>` yourself — the `@Mapper` macro
-/// generates initializers that create one `Boxed<T>` per stored field and
-/// pass them into your builder closure.
+/// You will not normally construct `Boxed<T>` yourself for a `@Mapper` builder field — the
+/// `@Mapper` macro generates initializers that create one `Boxed<T>` per stored field and
+/// pass them into your builder closure. Outside a builder field — e.g. inside a `Rule`'s own
+/// `body`, when it tail-delegates to a child `Rule` — you can construct a throwaway
+/// `Boxed<T>()` yourself and call it with the child rule directly, letting Swift infer `T`
+/// from the surrounding expected type:
+///
+/// ```swift
+/// var body: InfoCardBarArrangement {
+///     // before — construct the rule, then explicitly read its result:
+///     return ScheduledInfoBannerRule(input: someInput).body
+///
+///     // after — `Boxed` reads `.body` for you, no trailing `.body` needed:
+///     return Boxed()(ScheduledInfoBannerRule(input: someInput))
+/// }
+/// ```
 public struct Boxed<T>: Sendable {
     @inlinable
     public init() {}
@@ -61,6 +74,31 @@ public struct Boxed<T>: Sendable {
     @inlinable
     public func callAsFunction<R: Rule>(_ creation: () -> R) -> T where R.Output == T {
         creation().body
+    }
+
+    /// Resolves an already-constructed `Rule` value and returns its `body` directly — the
+    /// same "no trailing `.body`" ergonomic as the closure-taking overload above, but for
+    /// call sites that already have a rule value in hand rather than constructing one inside
+    /// a trailing closure. This is what lets a `Rule`'s own `body` tail-delegate to a child
+    /// rule without a builder field to lean on:
+    ///
+    /// ```swift
+    /// var body: InfoCardBarArrangement {
+    ///     // before:
+    ///     return ScheduledInfoBannerRule(input: someInput).body
+    ///
+    ///     // after:
+    ///     return Boxed()(ScheduledInfoBannerRule(input: someInput))
+    /// }
+    /// ```
+    ///
+    /// Never ambiguous with the two overloads above: a bare `Rule` value's type never
+    /// matches a closure parameter type, so overload resolution always has exactly one
+    /// match. Still no tree-walking, no ambient lookup — just a single, explicit,
+    /// non-recursive `.body` read spelled without the trailing `.body`.
+    @inlinable
+    public func callAsFunction<R: Rule>(_ rule: R) -> T where R.Output == T {
+        rule.body
     }
 }
 
