@@ -52,11 +52,14 @@
 /// literal readings of "make it exactly like `View`" were considered and rejected along the
 /// way:
 ///
-/// - **A recursive `var body: some Rule { ... }`**, with sub-rules nested as values and
-///   walked by a framework — this only works in real SwiftUI because the *runtime* privately
-///   resolves `some View` via `_makeView`. Replicating that here means writing that walker
+/// - **A recursive, framework-walked tree of `Rule`s**, resolved the way SwiftUI privately
+///   resolves `some View` via `_makeView` — replicating that here means writing that walker
 ///   ourselves, which is exactly the kind of runtime combinator/engine this library's
-///   [Non-goals](../../../README.md#non-goals) section already rejects.
+///   [Non-goals](../../../README.md#non-goals) section already rejects. `body` is marked
+///   `@RuleBuilder<Output>` (see `RuleBuilder`), which resolves *one* level of a composed
+///   child's `.body` for you — a lighter-weight, non-recursive relative of this idea, not a
+///   reversal of the rejection: nothing walks a `Rule` tree at runtime, and a multi-statement
+///   `body` (anything using `guard`/`return`) falls back to plain, unsugared getter semantics.
 /// - **Zero-argument leaf construction** (a sub-rule built with no input, relying on a
 ///   framework to supply it once the tree is walked) — this is environment-style implicit
 ///   dependency injection, which `CONTRIBUTING.md` explicitly forbids: *"Context/dependency
@@ -71,11 +74,12 @@
 /// - **No combinator operators.** `Rule` doesn't grow `.pullback`, `.map`, or any chaining
 ///   API — SwiftMapper's top-level Non-goals section already rejects a runtime combinator
 ///   library, and `Rule` doesn't change that.
-/// - **No recursive `Rule`-typed `body` walked by a framework**, and **no ambient/
-///   environment-style dependency resolution** — see Design history above. `Rule` is a
-///   naming/shape convention, not a DI container or a rendering engine — the "no need to
-///   inject it" ergonomics for a pure rule come entirely from a type having no stored
-///   dependencies beyond its own `input`, not from a hidden lookup mechanism.
+/// - **No recursive, multi-level tree walking**, and **no ambient/environment-style
+///   dependency resolution** — see Design history above. `RuleBuilder` resolves exactly one
+///   level of `.body` per composed child, statically, at the call site; it is not a rendering
+///   engine, and `Rule` is still not a DI container. The "no need to inject it" ergonomics for
+///   a pure rule come entirely from a type having no stored dependencies beyond its own
+///   `input`, not from a hidden lookup mechanism.
 /// - **Not a replacement for `@Mapper`.** `@Mapper` generates a labeled builder initializer
 ///   for a struct with several fields; `Rule` names the shape of one small, single-input/
 ///   single-output rule that a `@Mapper`-generated builder closure (or any other call site)
@@ -98,5 +102,12 @@ public protocol Rule<Input, Output> {
     /// The mapped result, computed from `input` (and, for context-needing rules, from
     /// whatever collaborators the type explicitly stores) the moment it's read. The one and
     /// only computed requirement — deliberately mirroring `View.body`.
+    ///
+    /// Marked `@RuleBuilder<Output>` so a `body` that's pure tail delegation to one child rule
+    /// (no `return` anywhere in the property) can construct that child directly, with no
+    /// `.body` and no `Boxed()` wrapper — see `RuleBuilder` for exactly what this does and
+    /// does not cover.
+    @RuleBuilder<Output>
     var body: Output { get }
 }
+
