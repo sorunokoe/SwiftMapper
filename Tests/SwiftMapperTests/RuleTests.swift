@@ -28,6 +28,29 @@ private struct GreetingRule: Rule {
     }
 }
 
+// A rule whose Output another rule can be chained into via `callAsFunction(_:)`, mirroring
+// the "count the uppercased word's length" kind of linear dependency a Mapper/Interactor
+// composes today.
+private struct WordLengthRule: Rule {
+    let input: String
+
+    var body: Int {
+        input.count
+    }
+}
+
+// A rule whose body chains `UppercasingRule` directly into `WordLengthRule` via
+// `callAsFunction(_:)` — no intermediate `let` binding, no `.body` at either step.
+private struct ChainedWordLengthRule: Rule {
+    let input: String
+
+    var body: Int {
+        UppercasingRule(input: input) { uppercased in
+            WordLengthRule(input: uppercased)
+        }
+    }
+}
+
 // A rule reading its `body` inside an `@Mapper`-generated builder closure, demonstrating the
 // two features compose without either requiring the other.
 @Mapper
@@ -201,6 +224,34 @@ struct RuleTests {
     func ruleBuilderResolvesNonOptionalChildRuleIntoOptionalBody() {
         #expect(OptionalRoutingRule(input: .shout("ada")).body == "ADA")
         #expect(OptionalRoutingRule(input: .silence).body == nil)
+    }
+
+    @Test("callAsFunction() invokes a Rule and returns the same value as reading .body directly")
+    func callAsFunctionMatchesBody() {
+        let rule = UppercasingRule(input: "ada")
+        #expect(rule() == rule.body)
+        #expect(rule() == "ADA")
+    }
+
+    @Test("callAsFunction() invokes a context-needing Rule the same way .body does")
+    func callAsFunctionMatchesBodyForContextNeedingRule() {
+        let rule = GreetingRule(input: .init(name: "Hopper", isFormal: true), salutationProvider: { "Dr." })
+        #expect(rule() == rule.body)
+        #expect(rule() == "Dr. Hopper")
+    }
+
+    @Test("Chaining callAsFunction(_:) composes one Rule directly into another with no intermediate let binding")
+    func chainingCallAsFunctionComposesTwoRules() {
+        let chained = UppercasingRule(input: "ada") { uppercased in
+            WordLengthRule(input: uppercased)
+        }
+        #expect(chained == 3)
+        #expect(chained == WordLengthRule(input: "ADA")())
+    }
+
+    @Test("A Rule's own body can tail-delegate to a chained callAsFunction(_:) composition")
+    func ruleBodyTailDelegatesToChainedComposition() {
+        #expect(ChainedWordLengthRule(input: "grace")() == 5)
     }
 
     @Test("An existing return-heavy, explicit-.body Rule still compiles and behaves correctly once body is @RuleBuilder<Output>")

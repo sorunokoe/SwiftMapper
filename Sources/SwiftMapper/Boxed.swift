@@ -19,26 +19,23 @@
 /// field's value.
 ///
 /// When a field's value comes from a `Rule`, the trailing closure can construct the rule
-/// directly — `Boxed` reads its `body` for you, so no call site needs to write `.body`:
+/// directly — `Boxed` invokes it for you, so no call site needs to write `.body` or `()`:
 ///
 /// ```swift
 /// DateBanner { TournamentInfoBannerRule(input: .init(eventStatus: status, playerPosition: position)) }
 /// ```
 ///
-/// You will not normally construct `Boxed<T>` yourself for a `@Mapper` builder field — the
-/// `@Mapper` macro generates initializers that create one `Boxed<T>` per stored field and
-/// pass them into your builder closure. Outside a builder field — e.g. inside a `Rule`'s own
-/// `body`, when it tail-delegates to a child `Rule` — you can construct a throwaway
-/// `Boxed<T>()` yourself and call it with the child rule directly, letting Swift infer `T`
-/// from the surrounding expected type:
+/// You will not normally construct `Boxed<T>` yourself — the `@Mapper` macro generates
+/// initializers that create one `Boxed<T>` per stored field and pass them into your builder
+/// closure. Outside a builder field — e.g. inside a `Rule`'s own `body`, when it
+/// tail-delegates to a child `Rule` but the surrounding code has an explicit `return` (which
+/// disables `RuleBuilder`'s sugar; see `Rule`'s "Invoking a Rule" section) — call the child
+/// rule directly instead of wrapping it in a throwaway `Boxed()`:
 ///
 /// ```swift
 /// var body: InfoCardBarArrangement {
-///     // before — construct the rule, then explicitly read its result:
-///     return ScheduledInfoBannerRule(input: someInput).body
-///
-///     // after — `Boxed` reads `.body` for you, no trailing `.body` needed:
-///     return Boxed()(ScheduledInfoBannerRule(input: someInput))
+///     // ...
+///     return ScheduledInfoBannerRule(input: someInput)()
 /// }
 /// ```
 public struct Boxed<T>: Sendable {
@@ -52,53 +49,40 @@ public struct Boxed<T>: Sendable {
         creation()
     }
 
-    /// Invokes `creation`, resolves the `Rule` it returns, and returns its `body` —
-    /// the ergonomic equivalent of a SwiftUI renderer reading `View.body` for you.
+    /// Invokes `creation`, then invokes the `Rule` it returns — the ergonomic equivalent of a
+    /// SwiftUI renderer resolving a child `View` for you.
     ///
     /// This is what lets a builder field read a `Rule` construction directly, with no
-    /// trailing `.body`:
+    /// trailing `()`:
     ///
     /// ```swift
-    /// // before — call the rule, then explicitly read its result:
-    /// TournamentType { TournamentTypeRule(input: tournamentInfo.tournamentType).body }
-    ///
-    /// // after — construct the rule; `Boxed` reads `.body` for you:
+    /// // equivalent — a builder field needs no trailing () at all:
+    /// TournamentType { TournamentTypeRule(input: tournamentInfo.tournamentType)() }
     /// TournamentType { TournamentTypeRule(input: tournamentInfo.tournamentType) }
     /// ```
     ///
     /// This overload and the plain `() -> T` one above are never ambiguous: the trailing
     /// closure's return type is either a concrete `Output` value or a concrete `Rule`, never
     /// both, so overload resolution always has exactly one match. No tree-walking, no
-    /// ambient lookup — this is a single, explicit, non-recursive `.body` read, the same one
-    /// you'd otherwise write by hand.
+    /// ambient lookup — this is a single, explicit, non-recursive invocation, the same one
+    /// you'd otherwise write by hand as `rule()`.
     @inlinable
     public func callAsFunction<R: Rule>(_ creation: () -> R) -> T where R.Output == T {
-        creation().body
+        creation()()
     }
 
-    /// Resolves an already-constructed `Rule` value and returns its `body` directly — the
-    /// same "no trailing `.body`" ergonomic as the closure-taking overload above, but for
-    /// call sites that already have a rule value in hand rather than constructing one inside
-    /// a trailing closure. This is what lets a `Rule`'s own `body` tail-delegate to a child
-    /// rule without a builder field to lean on:
-    ///
-    /// ```swift
-    /// var body: InfoCardBarArrangement {
-    ///     // before:
-    ///     return ScheduledInfoBannerRule(input: someInput).body
-    ///
-    ///     // after:
-    ///     return Boxed()(ScheduledInfoBannerRule(input: someInput))
-    /// }
-    /// ```
+    /// Resolves an already-constructed `Rule` value by invoking it directly — the same
+    /// "no wrapper needed" ergonomic as the closure-taking overload above, but for call sites
+    /// that already have a rule value in hand rather than constructing one inside a trailing
+    /// closure.
     ///
     /// Never ambiguous with the two overloads above: a bare `Rule` value's type never
     /// matches a closure parameter type, so overload resolution always has exactly one
     /// match. Still no tree-walking, no ambient lookup — just a single, explicit,
-    /// non-recursive `.body` read spelled without the trailing `.body`.
+    /// non-recursive invocation, equivalent to calling `rule()` directly.
     @inlinable
     public func callAsFunction<R: Rule>(_ rule: R) -> T where R.Output == T {
-        rule.body
+        rule()
     }
 }
 

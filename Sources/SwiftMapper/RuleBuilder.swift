@@ -41,10 +41,11 @@
 /// }
 /// ```
 ///
-/// It does **not** help resolve a child rule's `body` used as an intermediate `let` binding,
+/// It does **not** help resolve a child rule's result used as an intermediate `let` binding,
 /// or embedded as one argument among several in a larger struct literal — those aren't the
-/// body's own tail expression, so the builder never sees them. Plain `.body` remains the
-/// right, and only, tool there.
+/// body's own tail expression, so the builder never sees them. Calling the rule directly
+/// (`rule()`) remains the right, and only, tool there — see `Rule`'s "Invoking a Rule" section
+/// for why that's preferred over reading `.body`.
 @resultBuilder
 public enum RuleBuilder<Output> {
     /// A body whose one expression already produces `Output` directly (no child `Rule`
@@ -53,11 +54,11 @@ public enum RuleBuilder<Output> {
         expression
     }
 
-    /// A body whose one expression constructs a child `Rule` matching `Output` — resolves its
-    /// `body` for you, the same single, explicit, non-recursive read you'd otherwise write by
-    /// hand as `.body`.
+    /// A body whose one expression constructs a child `Rule` matching `Output` — invokes it
+    /// for you, the same single, explicit, non-recursive call you'd otherwise write by hand as
+    /// `rule()`.
     public static func buildExpression<R: Rule>(_ rule: R) -> Output where R.Output == Output {
-        rule.body
+        rule()
     }
 
     /// The same as the overload above, but for a `body` whose `Output` is `Optional` of a
@@ -69,7 +70,7 @@ public enum RuleBuilder<Output> {
     /// one case this library actually needs: an Optional-returning `Rule` composed from
     /// non-optional child rules.
     public static func buildExpression<R: Rule>(_ rule: R) -> Output where Output == R.Output? {
-        rule.body
+        rule()
     }
 
     public static func buildBlock(_ component: Output) -> Output {

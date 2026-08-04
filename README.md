@@ -269,7 +269,7 @@ type is either:
       }
   }
 
-  TournamentType { TournamentTypeRule(input: domain.tournamentType).body }
+  TournamentType { TournamentTypeRule(input: domain.tournamentType)() }
   ```
 
 - **Context-needing** — has explicit, constructor-injected collaborators
@@ -293,16 +293,55 @@ type is either:
   ```
 
 `Rule` and `@Mapper` compose freely — a `Rule`'s `body` is an ordinary place
-to construct and read an `@Mapper`-generated builder initializer, and a
-builder closure field is an ordinary place to construct a `Rule` and read
-its `body`. Neither requires the other.
+to construct and invoke an `@Mapper`-generated builder initializer, and a
+builder closure field is an ordinary place to construct and invoke a `Rule`.
+Neither requires the other.
 
-### Reading a `Rule` with no `.body`
+### Invoking a `Rule` — `callAsFunction()`, not `.body`
+
+`body` is a protocol requirement, so it can't be made any less accessible than `Rule` itself —
+but it's meant to be read in exactly two places: `RuleBuilder`'s own implementation, and (via
+the tail-delegation sugar below) a `Rule`'s own body. Everywhere else — a `Mapper`, an
+interactor, a test, an intermediate `let` binding — call the rule instead:
+
+```swift
+let mapped = TournamentTypeRule(input: domain.tournamentType)()
+```
+
+`callAsFunction()` is exactly `{ body }`. The reason to prefer it: `.body` reads like an
+ordinary stored property, which invites chaining further operations directly onto it
+(`.body.map { ... }`, `.body ?? fallback`) — exactly the generic-combinator shape this library
+rejects (see [Non-goals](#non-goals)). Branch with plain `if let`/`guard let`/`switch` instead:
+
+```swift
+// ❌ chains a combinator directly off the rule's result
+let arrangement = ScheduledStatusToTagTextRule(input: scheduled)().value.map { ... } ?? .none
+
+// ✅ invoke, then branch with ordinary control flow
+guard let text = ScheduledStatusToTagTextRule(input: scheduled)().value else { return .none }
+```
+
+A second `callAsFunction` overload chains one rule directly into another — invoking this rule,
+feeding its `Output` to a continuation, and returning the *resulting* rule's own invocation,
+with no intermediate `let` binding:
+
+```swift
+PlayerPositionFromExpandedInfoRule(input: expandedInfo) { playerPosition in
+    PlayerPositionRule(input: .init(playerPosition: playerPosition, positionScore: positionScore))
+}
+```
+
+The whole expression above has type `PlayerPositionRule.Output` — usable anywhere that type is
+expected. The continuation must return *another `Rule`*, never a bare value: this composes one
+rule directly into the next, the same way nesting `View`s composes views, rather than
+transforming a value through an arbitrary closure — see [`Rule` non-goals](#rule-non-goals).
+
+### Composing without a wrapper — `RuleBuilder`'s tail-delegation sugar
 
 `body` is itself declared `@RuleBuilder<Output>` (see `Sources/SwiftMapper/RuleBuilder.swift`),
 mirroring `@ViewBuilder var body: Body { get }` on SwiftUI's `View`. When a `Rule`'s `body` is
 **pure tail delegation to one child rule — no `return` anywhere in the property** — you can
-construct that child directly, with no `.body` and no wrapper at all, the same way you'd drop
+construct that child directly, with no `()` and no `.body`, the same way you'd drop
 a `Text("x")` straight into a SwiftUI `body` with no separate "render" step:
 
 ```swift
@@ -310,7 +349,7 @@ struct TournamentTypeBadgeRule: Rule {
     let input: DomainTournamentType
 
     var body: TournamentType {
-        TournamentTypeRule(input: input)   // .body resolved for you — no wrapper needed
+        TournamentTypeRule(input: input)   // invoked for you — no wrapper needed
     }
 }
 ```
@@ -341,47 +380,48 @@ the same way a plain `nil`-literal branch does.
 property contains **zero explicit `return` statements** anywhere (a general Swift rule, not
 specific to `RuleBuilder` — the same is true of `@ViewBuilder`). The moment a `body` has a
 `return` — including inside a `guard ... else { return }` — Swift falls back to ordinary,
-unsugared getter semantics for the **entire** property, and you're back to explicit `.body`.
-This is why `RuleBuilder` is purely additive: every existing `Rule` conformance, written with
-`guard`/`return` throughout, keeps compiling completely unchanged, whether or not it ever
-adopts the sugar.
+unsugared getter semantics for the **entire** property, and you're back to invoking a child
+rule explicitly. This is why `RuleBuilder` is purely additive: every existing `Rule`
+conformance, written with `guard`/`return` throughout, keeps compiling completely unchanged,
+whether or not it ever adopts the sugar.
 
 It also only ever resolves the property's own tail expression — it does **not** help when a
 child rule's value is:
 
 - assigned to an intermediate `let` and used later (e.g. for pattern matching before deciding
-  what to return),
+  what to return) — use the chaining `callAsFunction(_:)` overload above instead when the
+  dependency is linear,
 - embedded as one argument among several inside a larger struct initializer or function call,
 - the receiver of a further member-access chain (`SomeRule(input: x).values.flatMap(...)` — a
-  bare `Rule` value has no `.values`; resolve it first),
+  bare `Rule` value has no `.values`; invoke it first),
 - inside a nested closure like `.map { ChildRule(input: $0) }` (the closure has its own body,
   ungoverned by the outer property's `@RuleBuilder` attribute).
 
-For all of these, read `.body` explicitly:
+For all of these, invoke the rule explicitly:
 
 ```swift
 var body: InfoCardBarArrangement {
-    let placementBanner = placementBannerMapper.map(...)          // intermediate let: needs .body downstream
+    let placementBanner = placementBannerMapper.map(...)          // intermediate let: needs () downstream
     if case .visible = placementBanner { return placementBanner }
     guard case let .scheduled(scheduled) = onEnum(of: input.eventStatus) else { return .none }
-    return ScheduledInfoBannerRule(input: .init(scheduled: scheduled)).body   // return present: no sugar here either
+    return ScheduledInfoBannerRule(input: .init(scheduled: scheduled))()   // return present: no sugar here either
 }
 ```
 
 A `@Mapper`-generated builder field is a `Boxed<T>` value (see
 [How it works](#how-it-works) above), called with a trailing closure that must produce `T`.
 `Boxed<T>` has a second `callAsFunction` overload that accepts a closure returning
-`some Rule<_, T>` instead, and reads its `body` for you — useful when a builder field's whole
-value comes from one child rule, independent of whether that rule's own internals used the
-`RuleBuilder` sugar or explicit `.body`:
+`some Rule<_, T>` instead, and invokes it for you — useful when a builder field's whole value
+comes from one child rule, independent of whether that rule's own internals used the
+`RuleBuilder` sugar or explicit invocation:
 
 ```swift
-// equivalent — Boxed reads .body for you when the closure returns a Rule:
+// equivalent — Boxed invokes the rule for you when the closure returns a Rule:
 TournamentType { TournamentTypeRule(input: domain.tournamentType) }
 ```
 
 None of this is a tree-walking engine or ambient lookup — `RuleBuilder` resolves exactly one
-level of a composed child's `.body`, statically, at the call site, the same as `Boxed`'s
+level of a composed child's invocation, statically, at the call site, the same as `Boxed`'s
 `Rule`-accepting overload does for a builder field.
 
 ### Why `body` and not `map(_:)`
@@ -404,12 +444,22 @@ threaded in explicitly.
 
 ### `Rule` non-goals
 
-- **No combinator operators.** No `.pullback`, `.map`, or chaining API —
-  see [Non-goals](#non-goals) above; `Rule` doesn't change that.
+- **No generic value combinators.** `Rule` doesn't grow `.pullback`, `.map`, or any operator
+  that transforms an arbitrary `Output` into some other type — see [Non-goals](#non-goals)
+  above; `Rule` doesn't change that. The chaining `callAsFunction(_:)` overload is not an
+  exception: its continuation is constrained to return *another `Rule`*, never a bare value,
+  so it composes rules — the same way nesting `View`s composes views — rather than
+  transforming a value through an arbitrary closure.
+- **`.body` is not truly inaccessible — it's a documented convention, not a
+  compiler-enforced one.** Swift can't make a protocol requirement less accessible than the
+  protocol itself, so nothing stops a call site from writing `.body` directly. Treat it the
+  same way you'd treat reading `someView.body` directly in SwiftUI: it compiles, and it's
+  still wrong. Enforce this in review (a quick `grep -rn '\.body' Sources/` sweep, excluding
+  `RuleBuilder`/`Boxed` themselves, catches it), not by relying on the type system.
 - **No recursive, multi-level tree walking, and no ambient/environment-style
   dependency resolution.** Per [`CONTRIBUTING.md`](CONTRIBUTING.md),
   context/dependency parameters must be threaded explicitly.
-  `RuleBuilder` resolves exactly one level of `.body` per composed child,
+  `RuleBuilder` resolves exactly one level per composed child,
   statically; `Rule` is still a naming/shape convention, not a DI container
   or a rendering engine — a pure rule needs no injection because it has
   nothing to inject beyond its own `input`, not because of a hidden lookup

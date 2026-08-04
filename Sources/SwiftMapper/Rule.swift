@@ -20,8 +20,8 @@
 ///     }
 /// }
 ///
-/// // no DI, no registration — just construct it and read `body`:
-/// let mapped = TournamentTypeRule(input: domain.tournamentType).body
+/// // no DI, no registration — just construct it and invoke it:
+/// let mapped = TournamentTypeRule(input: domain.tournamentType)()
 /// ```
 ///
 /// A context-needing rule keeps explicit, constructor-injected collaborators alongside its
@@ -43,6 +43,52 @@
 ///     }
 /// }
 /// ```
+///
+/// ## Invoking a Rule — `callAsFunction()`, not `.body`
+///
+/// `body` is a protocol requirement, so Swift cannot make it any less accessible than `Rule`
+/// itself (`Rule` has to be `public` to be conformed to across module boundaries) — but it is
+/// meant to be read in exactly two places: `RuleBuilder`'s own implementation, and a `Rule`'s
+/// pure tail-delegation to one child rule (both are what `@RuleBuilder<Output>` exists for).
+/// Everywhere else — a `Mapper`, an interactor, a test, an intermediate `let` binding, or any
+/// other call site outside a `Rule`'s own `body` — call the rule instead of reading `.body`:
+///
+/// ```swift
+/// let mapped = TournamentTypeRule(input: domain.tournamentType)()
+/// ```
+///
+/// `callAsFunction()` is exactly `{ body }` — invoking a rule and reading its `body` are the
+/// same operation. The point of preferring `()` is what it *rules out*: `.body` reads like an
+/// ordinary stored property, which invites chaining further operations directly onto it
+/// (`.body.map { ... }`, `.body ?? fallback`) — exactly the generic-combinator shape this
+/// library rejects (see [Non-goals](../../../README.md#non-goals)). Treat a rule's result the
+/// same way you'd treat any other domain value once you have it: branch with plain
+/// `if let`/`guard let`/`switch`, never `.map`/`??` chained directly off the invocation:
+///
+/// ```swift
+/// // ❌ chains a combinator directly off the rule's result
+/// let arrangement = ScheduledStatusToTagTextRule(input: scheduled)().value.map { ... } ?? .none
+///
+/// // ✅ invoke, then branch with ordinary control flow
+/// guard let text = ScheduledStatusToTagTextRule(input: scheduled)().value else { return .none }
+/// ```
+///
+/// A second `callAsFunction` overload chains one rule directly into another — invoking this
+/// rule, feeding its `Output` to `continuation`, and returning the *resulting* rule's own
+/// invocation, with no intermediate `let` binding and no `.body` at either step:
+///
+/// ```swift
+/// PlayerPositionFromExpandedInfoRule(input: expandedInfo) { playerPosition in
+///     PlayerPositionRule(input: .init(playerPosition: playerPosition, positionScore: positionScore))
+/// }
+/// ```
+///
+/// The whole expression above has type `PlayerPositionRule.Output` — usable anywhere that
+/// type is expected (a `body`'s tail expression, a builder field, a `let` binding, a plain
+/// function argument). `continuation` is constrained to return *another `Rule`*, never a bare
+/// transformed value — this only ever composes one rule directly into the next, the same way
+/// nesting `View`s composes views; it is not a disguised `.map` over arbitrary output types
+/// (see [`Rule` non-goals](../../../README.md#rule-non-goals)).
 ///
 /// ## Design history
 ///
@@ -71,9 +117,13 @@
 ///
 /// ## Non-goals
 ///
-/// - **No combinator operators.** `Rule` doesn't grow `.pullback`, `.map`, or any chaining
-///   API — SwiftMapper's top-level Non-goals section already rejects a runtime combinator
-///   library, and `Rule` doesn't change that.
+/// - **No generic value combinators.** `Rule` doesn't grow `.pullback`, `.map`, or any
+///   operator that transforms an arbitrary `Output` into some other type — SwiftMapper's
+///   top-level Non-goals section already rejects a runtime combinator library, and `Rule`
+///   doesn't change that. The chaining `callAsFunction(_:)` overload (see "Invoking a Rule"
+///   above) is not an exception: its continuation is constrained to return *another `Rule`*,
+///   never a bare value, so it composes rules — the same way nesting `View`s composes views —
+///   rather than transforming a value through an arbitrary closure.
 /// - **No recursive, multi-level tree walking**, and **no ambient/environment-style
 ///   dependency resolution** — see Design history above. `RuleBuilder` resolves exactly one
 ///   level of `.body` per composed child, statically, at the call site; it is not a rendering
@@ -109,5 +159,24 @@ public protocol Rule<Input, Output> {
     /// does not cover.
     @RuleBuilder<Output>
     var body: Output { get }
+}
+
+public extension Rule {
+    /// Invokes this rule and returns its `Output` — the sanctioned way to read a rule's
+    /// result from anywhere outside a `Rule`'s own `body` (a `Mapper`, an interactor, a test,
+    /// an intermediate `let` binding, ...). See "Invoking a Rule" above for why this is
+    /// preferred over reading `.body` directly.
+    func callAsFunction() -> Output {
+        body
+    }
+
+    /// Chains this rule directly into another: invokes this rule, feeds its `Output` to
+    /// `continuation`, and returns the *resulting* rule's own invocation — composing two
+    /// rules in one expression, with no intermediate `let` binding and no `.body` at either
+    /// step. `continuation` must return another `Rule`; see "Invoking a Rule" above for why
+    /// that constraint keeps this from becoming a generic value combinator.
+    func callAsFunction<R: Rule>(_ continuation: (Output) -> R) -> R.Output {
+        continuation(self())()
+    }
 }
 
