@@ -49,6 +49,18 @@ private struct PersonLabelRule: Rule {
     }
 }
 
+// Same as `PersonLabelRule` above, but leaning on `Boxed`'s `Rule`-resolving `callAsFunction`
+// overload instead of reading `.body` by hand — the two are equivalent.
+private struct PersonLabelRuleWithoutExplicitBody: Rule {
+    let input: String
+
+    var body: PersonLabel {
+        PersonLabel { Name in
+            Name { UppercasingRule(input: input) }
+        }
+    }
+}
+
 @Suite("Rule protocol")
 struct RuleTests {
     @Test("A pure Rule conformance can be constructed inline with no stored dependencies beyond input")
@@ -68,5 +80,10 @@ struct RuleTests {
     @Test("A Rule's body composes with an @Mapper-generated builder initializer")
     func ruleBodyComposesWithMapperBuilder() {
         #expect(PersonLabelRule(input: "grace").body == PersonLabel(name: "GRACE"))
+    }
+
+    @Test("Boxed resolves a Rule's body automatically, so a builder field needs no explicit .body")
+    func boxedResolvesRuleBodyWithNoExplicitBody() {
+        #expect(PersonLabelRuleWithoutExplicitBody(input: "grace").body == PersonLabel(name: "GRACE"))
     }
 }

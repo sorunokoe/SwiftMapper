@@ -18,6 +18,13 @@
 /// them (`Profile { ... }`) just runs the trailing closure to produce the
 /// field's value.
 ///
+/// When a field's value comes from a `Rule`, the trailing closure can construct the rule
+/// directly — `Boxed` reads its `body` for you, so no call site needs to write `.body`:
+///
+/// ```swift
+/// DateBanner { TournamentInfoBannerRule(input: .init(eventStatus: status, playerPosition: position)) }
+/// ```
+///
 /// You will not normally construct `Boxed<T>` yourself — the `@Mapper` macro
 /// generates initializers that create one `Boxed<T>` per stored field and
 /// pass them into your builder closure.
@@ -31,4 +38,29 @@ public struct Boxed<T>: Sendable {
     public func callAsFunction(_ creation: () -> T) -> T {
         creation()
     }
+
+    /// Invokes `creation`, resolves the `Rule` it returns, and returns its `body` —
+    /// the ergonomic equivalent of a SwiftUI renderer reading `View.body` for you.
+    ///
+    /// This is what lets a builder field read a `Rule` construction directly, with no
+    /// trailing `.body`:
+    ///
+    /// ```swift
+    /// // before — call the rule, then explicitly read its result:
+    /// TournamentType { TournamentTypeRule(input: tournamentInfo.tournamentType).body }
+    ///
+    /// // after — construct the rule; `Boxed` reads `.body` for you:
+    /// TournamentType { TournamentTypeRule(input: tournamentInfo.tournamentType) }
+    /// ```
+    ///
+    /// This overload and the plain `() -> T` one above are never ambiguous: the trailing
+    /// closure's return type is either a concrete `Output` value or a concrete `Rule`, never
+    /// both, so overload resolution always has exactly one match. No tree-walking, no
+    /// ambient lookup — this is a single, explicit, non-recursive `.body` read, the same one
+    /// you'd otherwise write by hand.
+    @inlinable
+    public func callAsFunction<R: Rule>(_ creation: () -> R) -> T where R.Output == T {
+        creation().body
+    }
 }
+
