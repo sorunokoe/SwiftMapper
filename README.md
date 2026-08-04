@@ -297,6 +297,27 @@ to construct and read an `@Mapper`-generated builder initializer, and a
 builder closure field is an ordinary place to construct a `Rule` and read
 its `body`. Neither requires the other.
 
+### Reading a `Rule` inside a `@Mapper` builder field, with no `.body`
+
+A `@Mapper`-generated builder field is a `Boxed<T>` value (see
+[How it works](#how-it-works) above), called with a trailing
+closure that must produce `T`. `Boxed<T>` has a second `callAsFunction`
+overload that accepts a closure returning `some Rule<_, T>` instead, and
+reads its `body` for you — so a builder field can construct a `Rule`
+directly, exactly the way you'd drop a `Text("x")` straight into a SwiftUI
+`body` with no separate "render" step:
+
+```swift
+// equivalent — Boxed reads .body for you when the closure returns a Rule:
+TournamentType { TournamentTypeRule(input: domain.tournamentType) }
+```
+
+This isn't a tree-walking engine or ambient lookup — it's one non-recursive,
+statically-resolved overload, equivalent to writing `.body` by hand. Outside
+a `Boxed` field (e.g. inside another `Rule`'s own `body`, composing a child
+rule), `.body` is still read explicitly — `Boxed`'s overload only applies at
+the one place a `@Mapper` builder closure already expects to receive `T`.
+
 ### Why `body` and not `map(_:)`
 
 An earlier version of this protocol used a single `func map(_ input: Input)
