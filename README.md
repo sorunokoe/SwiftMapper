@@ -297,7 +297,7 @@ to construct and read an `@Mapper`-generated builder initializer, and a
 builder closure field is an ordinary place to construct a `Rule` and read
 its `body`. Neither requires the other.
 
-### Reading a `Rule` inside a `@Mapper` builder field, with no `.body`
+### Reading a `Rule` with no `.body`
 
 A `@Mapper`-generated builder field is a `Boxed<T>` value (see
 [How it works](#how-it-works) above), called with a trailing
@@ -312,11 +312,28 @@ directly, exactly the way you'd drop a `Text("x")` straight into a SwiftUI
 TournamentType { TournamentTypeRule(input: domain.tournamentType) }
 ```
 
-This isn't a tree-walking engine or ambient lookup — it's one non-recursive,
-statically-resolved overload, equivalent to writing `.body` by hand. Outside
-a `Boxed` field (e.g. inside another `Rule`'s own `body`, composing a child
-rule), `.body` is still read explicitly — `Boxed`'s overload only applies at
-the one place a `@Mapper` builder closure already expects to receive `T`.
+Outside a `@Mapper` builder field — e.g. inside another `Rule`'s own `body`,
+tail-delegating to a child rule — construct a throwaway `Boxed<T>()` and call
+it with the child rule value directly. Swift infers `T` from the surrounding
+expected type (a `return` statement, a single-expression `body`, etc.), and
+a third `callAsFunction` overload reads `.body` for you the same way:
+
+```swift
+var body: InfoCardBarArrangement {
+    // before:
+    return ScheduledInfoBannerRule(input: someInput).body
+
+    // after:
+    return Boxed()(ScheduledInfoBannerRule(input: someInput))
+}
+```
+
+Neither of these is a tree-walking engine or ambient lookup — they're two
+non-recursive, statically-resolved overloads (one closure-taking, one
+value-taking), each equivalent to writing `.body` by hand. `Boxed`'s
+value-taking overload is never ambiguous with the two closure-taking ones:
+a bare `Rule` value's type never matches a closure parameter type, so
+overload resolution always has exactly one match.
 
 ### Why `body` and not `map(_:)`
 
