@@ -84,5 +84,25 @@ public struct Boxed<T>: Sendable {
     public func callAsFunction<R: Rule>(_ rule: R) -> T where R.Output == T {
         rule()
     }
+
+    /// The same as the closure-taking overload above, but for an `Optional`-typed field whose
+    /// value comes from a non-optional `Rule` — e.g. `@Mapper` generates a
+    /// `ParsScoresChart { ProfileMetricsParsScoresChartRule(input: ...) }` field where the
+    /// stored property is `ProfileMetricsParsScoresChart?` but the rule's own `Output` is the
+    /// non-optional `ProfileMetricsParsScoresChart`. Swift's usual implicit-Optional-promotion
+    /// doesn't automatically extend into a generic function's return type — this overload
+    /// restores it here the same way `RuleBuilder`'s matching overload restores it for a
+    /// `Rule`'s own `body`.
+    @inlinable
+    public func callAsFunction<R: Rule>(_ creation: () -> R) -> T where T == R.Output? {
+        creation()()
+    }
+
+    /// The same as the bare-value overload above, but for an `Optional`-typed field resolved
+    /// from an already-constructed, non-optional `Rule` value.
+    @inlinable
+    public func callAsFunction<R: Rule>(_ rule: R) -> T where T == R.Output? {
+        rule()
+    }
 }
 

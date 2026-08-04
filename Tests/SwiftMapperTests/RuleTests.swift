@@ -62,6 +62,18 @@ private struct PersonLabel: Equatable, Sendable {
     }
 }
 
+// An `@Mapper` type with an Optional-typed field, resolved from a non-optional child `Rule` —
+// exercises `Boxed`'s `Output == R.Output?` overloads (both the closure-taking and the
+// bare-value one), the `Boxed` equivalent of `RuleBuilder`'s matching Optional overload.
+@Mapper
+private struct OptionalPersonLabel: Equatable, Sendable {
+    let nickname: String?
+
+    init(nickname: String?) {
+        self.nickname = nickname
+    }
+}
+
 private struct PersonLabelRule: Rule {
     let input: String
 
@@ -80,6 +92,32 @@ private struct PersonLabelRuleWithoutExplicitBody: Rule {
     var body: PersonLabel {
         PersonLabel { Name in
             Name { UppercasingRule(input: input) }
+        }
+    }
+}
+
+// Same as `PersonLabelRuleWithoutExplicitBody` above, but the `@Mapper` field is
+// Optional-typed while the rule it resolves to is non-optional — exercises `Boxed`'s
+// `Output == R.Output?` closure-taking overload with a rule constructed inline.
+private struct OptionalPersonLabelRule: Rule {
+    let input: String
+
+    var body: OptionalPersonLabel {
+        OptionalPersonLabel { Nickname in
+            Nickname { UppercasingRule(input: input) }
+        }
+    }
+}
+
+// Same as `OptionalPersonLabelRule` above, but passing an already-constructed `Rule` value —
+// exercises `Boxed`'s `Output == R.Output?` bare-value overload.
+private struct OptionalPersonLabelRuleWithConstructedRule: Rule {
+    let input: String
+
+    var body: OptionalPersonLabel {
+        let rule = UppercasingRule(input: input)
+        return OptionalPersonLabel { Nickname in
+            Nickname(rule)
         }
     }
 }
@@ -201,6 +239,16 @@ struct RuleTests {
     @Test("Boxed resolves a Rule's body automatically, so a builder field needs no explicit .body")
     func boxedResolvesRuleBodyWithNoExplicitBody() {
         #expect(PersonLabelRuleWithoutExplicitBody(input: "grace").body == PersonLabel(name: "GRACE"))
+    }
+
+    @Test("Boxed resolves a non-optional child Rule into an Optional-typed @Mapper builder field")
+    func boxedResolvesNonOptionalChildRuleIntoOptionalMapperField() {
+        #expect(OptionalPersonLabelRule(input: "grace").body == OptionalPersonLabel(nickname: "GRACE"))
+    }
+
+    @Test("Boxed resolves an already-constructed non-optional Rule value into an Optional-typed @Mapper builder field")
+    func boxedResolvesConstructedNonOptionalRuleValueIntoOptionalMapperField() {
+        #expect(OptionalPersonLabelRuleWithConstructedRule(input: "grace").body == OptionalPersonLabel(nickname: "GRACE"))
     }
 
     @Test("A throwaway Boxed() resolves a child Rule's body with no explicit .body, outside a builder field")

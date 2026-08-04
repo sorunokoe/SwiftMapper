@@ -420,9 +420,21 @@ comes from one child rule, independent of whether that rule's own internals used
 TournamentType { TournamentTypeRule(input: domain.tournamentType) }
 ```
 
+`Boxed<T>` also resolves this when `T` itself is `Optional` and the rule's `Output` is the
+non-optional wrapped type — e.g. an `@Mapper` field declared `let parsScoresChart:
+ProfileMetricsParsScoresChart?` can still be filled directly from a rule whose `Output` is the
+non-optional `ProfileMetricsParsScoresChart`, with no `Optional(...)` wrapping or `as
+ProfileMetricsParsScoresChart?` cast at the call site:
+
+```swift
+// ParsScoresChart's stored type is `ProfileMetricsParsScoresChart?`; the rule's Output is the
+// non-optional `ProfileMetricsParsScoresChart` — Boxed promotes it for you:
+ParsScoresChart { ProfileMetricsParsScoresChartRule(input: domain.parsMetrics, chartViewFeature: chartViewFeature) }
+```
+
 None of this is a tree-walking engine or ambient lookup — `RuleBuilder` resolves exactly one
 level of a composed child's invocation, statically, at the call site, the same as `Boxed`'s
-`Rule`-accepting overload does for a builder field.
+`Rule`-accepting overloads do for a builder field.
 
 ### Why `body` and not `map(_:)`
 
