@@ -73,6 +73,65 @@ private struct ShoutingGreetingRule: Rule {
     }
 }
 
+// Same as `ShoutingGreetingRule` above, but relying on `body`'s `@RuleBuilder<Output>` instead
+// of a throwaway `Boxed()` — pure tail delegation to one child rule, with no `.body` and no
+// `Boxed()` wrapper at all.
+private struct DirectShoutingGreetingRule: Rule {
+    let input: String
+
+    var body: String {
+        UppercasingRule(input: input)
+    }
+}
+
+// A body that picks between two child rules (or a plain value) via `switch` used as the
+// body's one expression — no `return` anywhere, so `@RuleBuilder<Output>` resolves each
+// branch's `.body` for you.
+private struct RoutingRule: Rule {
+    enum Kind {
+        case shout(String)
+        case whisper(String)
+        case silence
+    }
+
+    let input: Kind
+
+    var body: String {
+        switch input {
+        case let .shout(text):
+            UppercasingRule(input: text)
+        case let .whisper(text):
+            GreetingRule(input: .init(name: text, isFormal: true), salutationProvider: { "psst," })
+        case .silence:
+            ""
+        }
+    }
+}
+
+// A body written in the pre-existing, return-heavy, explicit-`.body` style — proves that
+// marking the protocol requirement `@RuleBuilder<Output>` doesn't force this style to change:
+// any `return` anywhere in the property (including inside `guard`) falls back to ordinary,
+// unsugared getter semantics for the whole property, exactly as it already did before
+// `RuleBuilder` existed.
+private struct ExistingStyleRule: Rule {
+    let input: Int
+
+    var body: String {
+        guard input > 0 else { return "non-positive" }
+        if input.isMultiple(of: 2) {
+            return "even:\(UppercasingRule(input: "even").body)"
+        }
+        switch input {
+        case 1:
+            return "one"
+        case 3:
+            return "three"
+        default:
+            return "odd:\(input)"
+        }
+    }
+}
+
 @Suite("Rule protocol")
 struct RuleTests {
     @Test("A pure Rule conformance can be constructed inline with no stored dependencies beyond input")
@@ -102,5 +161,26 @@ struct RuleTests {
     @Test("A throwaway Boxed() resolves a child Rule's body with no explicit .body, outside a builder field")
     func boxedResolvesRuleValueDirectlyOutsideBuilderField() {
         #expect(ShoutingGreetingRule(input: "ada").body == "ADA")
+    }
+
+    @Test("body's @RuleBuilder resolves a child Rule's body with no .body and no Boxed() wrapper, for pure tail delegation")
+    func ruleBuilderResolvesPureTailDelegationWithNoWrapper() {
+        #expect(DirectShoutingGreetingRule(input: "ada").body == "ADA")
+    }
+
+    @Test("body's @RuleBuilder resolves each branch of a switch used as the body's one expression")
+    func ruleBuilderResolvesSwitchBranchesMixingRulesAndPlainValues() {
+        #expect(RoutingRule(input: .shout("ada")).body == "ADA")
+        #expect(RoutingRule(input: .whisper("grace")).body == "psst, grace")
+        #expect(RoutingRule(input: .silence).body == "")
+    }
+
+    @Test("An existing return-heavy, explicit-.body Rule still compiles and behaves correctly once body is @RuleBuilder<Output>")
+    func returnHeavyBodyStaysBackwardCompatible() {
+        #expect(ExistingStyleRule(input: -1).body == "non-positive")
+        #expect(ExistingStyleRule(input: 2).body == "even:EVEN")
+        #expect(ExistingStyleRule(input: 1).body == "one")
+        #expect(ExistingStyleRule(input: 3).body == "three")
+        #expect(ExistingStyleRule(input: 7).body == "odd:7")
     }
 }

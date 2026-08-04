@@ -299,41 +299,84 @@ its `body`. Neither requires the other.
 
 ### Reading a `Rule` with no `.body`
 
+`body` is itself declared `@RuleBuilder<Output>` (see `Sources/SwiftMapper/RuleBuilder.swift`),
+mirroring `@ViewBuilder var body: Body { get }` on SwiftUI's `View`. When a `Rule`'s `body` is
+**pure tail delegation to one child rule — no `return` anywhere in the property** — you can
+construct that child directly, with no `.body` and no wrapper at all, the same way you'd drop
+a `Text("x")` straight into a SwiftUI `body` with no separate "render" step:
+
+```swift
+struct TournamentTypeBadgeRule: Rule {
+    let input: DomainTournamentType
+
+    var body: TournamentType {
+        TournamentTypeRule(input: input)   // .body resolved for you — no wrapper needed
+    }
+}
+```
+
+This also works for `switch`/`if`-`else` used as the body's one expression, mixing plain
+values and child rules per branch:
+
+```swift
+var body: TournamentLeaderboardFiltersData? {
+    switch onEnum(of: input.expandedInfo) {
+    case let .CourseRoundExpanded(courseRound):
+        CourseRoundLeaderboardFiltersRule(input: .init(expandedInfo: input.expandedInfo, courseRound: courseRound))
+    case .ClosestToPinExpanded, .LongestDriveExpanded:
+        LocationLeaderboardFiltersRule(input: input.expandedInfo)
+    default:
+        nil
+    }
+}
+```
+
+**The one hard constraint:** Swift only applies a result builder to a property when that
+property contains **zero explicit `return` statements** anywhere (a general Swift rule, not
+specific to `RuleBuilder` — the same is true of `@ViewBuilder`). The moment a `body` has a
+`return` — including inside a `guard ... else { return }` — Swift falls back to ordinary,
+unsugared getter semantics for the **entire** property, and you're back to explicit `.body`.
+This is why `RuleBuilder` is purely additive: every existing `Rule` conformance, written with
+`guard`/`return` throughout, keeps compiling completely unchanged, whether or not it ever
+adopts the sugar.
+
+It also only ever resolves the property's own tail expression — it does **not** help when a
+child rule's value is:
+
+- assigned to an intermediate `let` and used later (e.g. for pattern matching before deciding
+  what to return),
+- embedded as one argument among several inside a larger struct initializer or function call,
+- the receiver of a further member-access chain (`SomeRule(input: x).values.flatMap(...)` — a
+  bare `Rule` value has no `.values`; resolve it first),
+- inside a nested closure like `.map { ChildRule(input: $0) }` (the closure has its own body,
+  ungoverned by the outer property's `@RuleBuilder` attribute).
+
+For all of these, read `.body` explicitly:
+
+```swift
+var body: InfoCardBarArrangement {
+    let placementBanner = placementBannerMapper.map(...)          // intermediate let: needs .body downstream
+    if case .visible = placementBanner { return placementBanner }
+    guard case let .scheduled(scheduled) = onEnum(of: input.eventStatus) else { return .none }
+    return ScheduledInfoBannerRule(input: .init(scheduled: scheduled)).body   // return present: no sugar here either
+}
+```
+
 A `@Mapper`-generated builder field is a `Boxed<T>` value (see
-[How it works](#how-it-works) above), called with a trailing
-closure that must produce `T`. `Boxed<T>` has a second `callAsFunction`
-overload that accepts a closure returning `some Rule<_, T>` instead, and
-reads its `body` for you — so a builder field can construct a `Rule`
-directly, exactly the way you'd drop a `Text("x")` straight into a SwiftUI
-`body` with no separate "render" step:
+[How it works](#how-it-works) above), called with a trailing closure that must produce `T`.
+`Boxed<T>` has a second `callAsFunction` overload that accepts a closure returning
+`some Rule<_, T>` instead, and reads its `body` for you — useful when a builder field's whole
+value comes from one child rule, independent of whether that rule's own internals used the
+`RuleBuilder` sugar or explicit `.body`:
 
 ```swift
 // equivalent — Boxed reads .body for you when the closure returns a Rule:
 TournamentType { TournamentTypeRule(input: domain.tournamentType) }
 ```
 
-Outside a `@Mapper` builder field — e.g. inside another `Rule`'s own `body`,
-tail-delegating to a child rule — construct a throwaway `Boxed<T>()` and call
-it with the child rule value directly. Swift infers `T` from the surrounding
-expected type (a `return` statement, a single-expression `body`, etc.), and
-a third `callAsFunction` overload reads `.body` for you the same way:
-
-```swift
-var body: InfoCardBarArrangement {
-    // before:
-    return ScheduledInfoBannerRule(input: someInput).body
-
-    // after:
-    return Boxed()(ScheduledInfoBannerRule(input: someInput))
-}
-```
-
-Neither of these is a tree-walking engine or ambient lookup — they're two
-non-recursive, statically-resolved overloads (one closure-taking, one
-value-taking), each equivalent to writing `.body` by hand. `Boxed`'s
-value-taking overload is never ambiguous with the two closure-taking ones:
-a bare `Rule` value's type never matches a closure parameter type, so
-overload resolution always has exactly one match.
+None of this is a tree-walking engine or ambient lookup — `RuleBuilder` resolves exactly one
+level of a composed child's `.body`, statically, at the call site, the same as `Boxed`'s
+`Rule`-accepting overload does for a builder field.
 
 ### Why `body` and not `map(_:)`
 
@@ -341,27 +384,30 @@ An earlier version of this protocol used a single `func map(_ input: Input)
 -> Output` requirement instead. It was reshaped to store `input` and expose
 `body` as a computed property to read closer to SwiftUI's own vocabulary.
 Two more literal readings of "make it exactly like `View`" were considered
-and rejected along the way — a recursive `var body: some Rule { ... }` with
-sub-rules walked by a framework (this only works in real SwiftUI because the
-*runtime* privately resolves `some View`; replicating it here means writing
-that walker ourselves — exactly the runtime combinator/engine this library
-rejects below), and zero-argument leaf construction relying on a framework
-to supply `input` ambiently (environment-style implicit DI, forbidden by
-`CONTRIBUTING.md`'s explicit-threading rule). `Rule` keeps the part that's
-achievable without an engine or ambient lookup: `body` as a computed
-property, `input` always threaded in explicitly.
+and rejected along the way — a recursive, framework-walked tree of `Rule`s
+resolved the way SwiftUI privately resolves `some View` (replicating that
+here means writing that walker ourselves — exactly the runtime
+combinator/engine this library rejects below; `body`'s `@RuleBuilder<Output>`
+is a lighter-weight, non-recursive relative of this idea, not a reversal of
+the rejection — nothing walks a `Rule` tree at runtime), and zero-argument
+leaf construction relying on a framework to supply `input` ambiently
+(environment-style implicit DI, forbidden by `CONTRIBUTING.md`'s
+explicit-threading rule). `Rule` keeps the part that's achievable without an
+engine or ambient lookup: `body` as a computed property, `input` always
+threaded in explicitly.
 
 ### `Rule` non-goals
 
 - **No combinator operators.** No `.pullback`, `.map`, or chaining API —
   see [Non-goals](#non-goals) above; `Rule` doesn't change that.
-- **No recursive `Rule`-typed `body` walked by a framework, and no ambient/
-  environment-style dependency resolution.** Per
-  [`CONTRIBUTING.md`](CONTRIBUTING.md), context/dependency parameters must be
-  threaded explicitly. `Rule` is a naming/shape convention, not a DI
-  container or a rendering engine — a pure rule needs no injection because
-  it has nothing to inject beyond its own `input`, not because of a hidden
-  lookup mechanism.
+- **No recursive, multi-level tree walking, and no ambient/environment-style
+  dependency resolution.** Per [`CONTRIBUTING.md`](CONTRIBUTING.md),
+  context/dependency parameters must be threaded explicitly.
+  `RuleBuilder` resolves exactly one level of `.body` per composed child,
+  statically; `Rule` is still a naming/shape convention, not a DI container
+  or a rendering engine — a pure rule needs no injection because it has
+  nothing to inject beyond its own `input`, not because of a hidden lookup
+  mechanism.
 - **Not retrofitted onto every existing mapper.** Adopt it for new,
   genuinely single-input leaf rules; a mapper whose natural shape takes
   several labeled parameters, or that dispatches across a sealed type before
