@@ -108,6 +108,28 @@ private struct RoutingRule: Rule {
     }
 }
 
+// A body whose Output is Optional of a non-optional child rule's Output, mixing a bare `nil`
+// branch with a delegating-rule branch — exercises the `Output == R.Output?` buildExpression
+// overload (Swift's usual implicit Optional-promotion doesn't reach into a result builder's
+// generic buildExpression on its own).
+private struct OptionalRoutingRule: Rule {
+    enum Kind {
+        case shout(String)
+        case silence
+    }
+
+    let input: Kind
+
+    var body: String? {
+        switch input {
+        case let .shout(text):
+            UppercasingRule(input: text)
+        case .silence:
+            nil
+        }
+    }
+}
+
 // A body written in the pre-existing, return-heavy, explicit-`.body` style — proves that
 // marking the protocol requirement `@RuleBuilder<Output>` doesn't force this style to change:
 // any `return` anywhere in the property (including inside `guard`) falls back to ordinary,
@@ -173,6 +195,12 @@ struct RuleTests {
         #expect(RoutingRule(input: .shout("ada")).body == "ADA")
         #expect(RoutingRule(input: .whisper("grace")).body == "psst, grace")
         #expect(RoutingRule(input: .silence).body == "")
+    }
+
+    @Test("body's @RuleBuilder resolves a non-optional child rule into an Optional-typed body")
+    func ruleBuilderResolvesNonOptionalChildRuleIntoOptionalBody() {
+        #expect(OptionalRoutingRule(input: .shout("ada")).body == "ADA")
+        #expect(OptionalRoutingRule(input: .silence).body == nil)
     }
 
     @Test("An existing return-heavy, explicit-.body Rule still compiles and behaves correctly once body is @RuleBuilder<Output>")

@@ -331,6 +331,12 @@ var body: TournamentLeaderboardFiltersData? {
 }
 ```
 
+Note above that `CourseRoundLeaderboardFiltersRule`'s own `Output` is the non-optional
+`TournamentLeaderboardFiltersData`, while this `body`'s `Output` is the optional
+`TournamentLeaderboardFiltersData?` — `RuleBuilder` has a second `buildExpression` overload
+specifically for this "Optional body, non-optional child rule" shape, so it resolves exactly
+the same way a plain `nil`-literal branch does.
+
 **The one hard constraint:** Swift only applies a result builder to a property when that
 property contains **zero explicit `return` statements** anywhere (a general Swift rule, not
 specific to `RuleBuilder` — the same is true of `@ViewBuilder`). The moment a `body` has a
