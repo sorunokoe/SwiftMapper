@@ -89,3 +89,39 @@ public enum RuleBuilder<Output> {
         component
     }
 }
+
+extension RuleBuilder {
+    /// Supports a body whose `Output` is `[Element]`, built from one line per array element —
+    /// the same "one row per line" shape `ForEach`'s content closure has, but for a fixed,
+    /// statically known set of rows written directly in `body` rather than iterated at
+    /// runtime:
+    ///
+    /// ```swift
+    /// var body: [DataState<TournamentSettingsItemData>] {
+    ///     TournamentSettingsAttemptsRule(input: input.attempts)
+    ///     TournamentSettingsGameNameRule(input: input.courseName)
+    ///     TournamentSettingsHolesRule(input: input.puttPuttTournament.numberOfHoles)
+    /// }
+    /// ```
+    ///
+    /// Each line is either a plain `Element` value (this overload) or a child `Rule`
+    /// producing `Element` (the next overload below) — resolved the same single,
+    /// non-recursive way as every other `RuleBuilder` overload. The classic array-literal
+    /// form (`[a(), b(), c()]`) remains exactly as valid as before — it hits the plain
+    /// `Output`-typed overloads above unchanged — this is additive sugar, not a replacement.
+    public static func buildExpression<Element>(_ expression: Element) -> Element where Output == [Element] {
+        expression
+    }
+
+    /// The `Rule`-producing counterpart of the overload above: one line constructs a child
+    /// `Rule` whose `Output` matches one array element — invoked for you, same as every other
+    /// `RuleBuilder` overload.
+    public static func buildExpression<R: Rule, Element>(_ rule: R) -> Element where Output == [Element], R.Output == Element {
+        rule()
+    }
+
+    /// Collects one `Element` per `body` line into the final `[Element]` array.
+    public static func buildBlock<Element>(_ components: Element...) -> [Element] where Output == [Element] {
+        components
+    }
+}

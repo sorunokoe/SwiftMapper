@@ -204,6 +204,21 @@ private struct OptionalRoutingRule: Rule {
     }
 }
 
+// A rule whose `Output` is `[Int]`, built one line per array element — mixing two lines that
+// each delegate to a child `Rule` producing `Int` with one line that's a plain `Int` value —
+// exercising `RuleBuilder`'s array-specific `buildExpression`/`buildBlock` overloads (the
+// "one row per line" shape, for a fixed, statically known set of rows written directly in
+// `body`, rather than iterated at runtime).
+private struct WordStatsRule: Rule {
+    let input: String
+
+    var body: [Int] {
+        WordLengthRule(input: input)
+        WordLengthRule(input: input.uppercased())
+        input.count * 2
+    }
+}
+
 // A body written in the pre-existing, return-heavy, explicit-`.body` style — proves that
 // marking the protocol requirement `@RuleBuilder<Output>` doesn't force this style to change:
 // any `return` anywhere in the property (including inside `guard`) falls back to ordinary,
@@ -326,6 +341,11 @@ struct RuleTests {
     @Test("A Rule's own body can tail-delegate to a chained callAsFunction(_:) composition that produces a plain value")
     func ruleBodyTailDelegatesToChainedPlainValueComposition() {
         #expect(ChainedGreetingRule(input: "grace")() == "HELLO, GRACE!")
+    }
+
+    @Test("body's @RuleBuilder collects one array element per line, mixing child Rules and plain values, with no array literal or trailing () needed")
+    func ruleBuilderCollectsArrayBodyOneElementPerLine() {
+        #expect(WordStatsRule(input: "ada").body == [3, 3, 6])
     }
 
     @Test("An existing return-heavy, explicit-.body Rule still compiles and behaves correctly once body is @RuleBuilder<Output>")

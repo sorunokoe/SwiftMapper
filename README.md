@@ -392,6 +392,27 @@ Note above that `CourseRoundLeaderboardFiltersRule`'s own `Output` is the non-op
 specifically for this "Optional body, non-optional child rule" shape, so it resolves exactly
 the same way a plain `nil`-literal branch does.
 
+When `Output` is itself an array (`[Element]`), `RuleBuilder` also supports one line per
+array element — the same "one row per line" shape `ForEach`'s content closure has, but for a
+fixed, statically known set of rows written directly in `body`, rather than iterated at
+runtime:
+
+```swift
+var body: [DataState<TournamentSettingsItemData>] {
+    TournamentSettingsAttemptsRule(input: input.attempts)
+    TournamentSettingsGameNameRule(input: input.courseName)
+    TournamentSettingsHolesRule(input: input.puttPuttTournament.numberOfHoles)
+    BooleanSettingsItemRule(input: .init(headline: .tieBreaker, enabled: input.isTieBreakerEnabled))
+    TournamentSettingsParticipantsRule(input: input.puttPuttTournament.participants)
+}
+```
+
+Each line is either a plain `Element` value or a child `Rule` producing `Element`, resolved
+the same single, non-recursive way as every other `RuleBuilder` overload. The classic
+array-literal form (`[a(), b(), c()]`) remains exactly as valid as before — it hits the plain
+`Output`-typed overloads, unchanged — this is additive sugar, not a replacement, so pick
+whichever reads better at a given call site.
+
 **The one hard constraint:** Swift only applies a result builder to a property when that
 property contains **zero explicit `return` statements** anywhere (a general Swift rule, not
 specific to `RuleBuilder` — the same is true of `@ViewBuilder`). The moment a `body` has a
