@@ -332,9 +332,25 @@ PlayerPositionFromExpandedInfoRule(input: expandedInfo) { playerPosition in
 ```
 
 The whole expression above has type `PlayerPositionRule.Output` — usable anywhere that type is
-expected. The continuation must return *another `Rule`*, never a bare value: this composes one
-rule directly into the next, the same way nesting `View`s composes views, rather than
-transforming a value through an arbitrary closure — see [`Rule` non-goals](#rule-non-goals).
+expected.
+
+A third overload covers the same shape when the continuation produces a plain value instead of
+another rule — most useful when a rule's result is only one piece of a larger literal:
+
+```swift
+EventStatusToDateRule(input: input.status) { dateRange in
+    InfoCardTextArrangement.threeItems(
+        headlineTextItem: .headLine(label: input.name),
+        subtitleTextItem: .subtitle(label: dateRange),
+        primaryInfoTextItem: LeagueInviteCardFeatureListRule(input: input)()
+    )
+}
+```
+
+Both overloads compose one rule directly into the next expression, the same way nesting
+`View`s composes views — neither is a disguised `.map` over arbitrary output types: there is
+still no optional-promotion, no `??` fallback, and no further chaining off the result, see
+[`Rule` non-goals](#rule-non-goals).
 
 ### Composing without a wrapper — `RuleBuilder`'s tail-delegation sugar
 
@@ -456,12 +472,14 @@ threaded in explicitly.
 
 ### `Rule` non-goals
 
-- **No generic value combinators.** `Rule` doesn't grow `.pullback`, `.map`, or any operator
-  that transforms an arbitrary `Output` into some other type — see [Non-goals](#non-goals)
-  above; `Rule` doesn't change that. The chaining `callAsFunction(_:)` overload is not an
-  exception: its continuation is constrained to return *another `Rule`*, never a bare value,
-  so it composes rules — the same way nesting `View`s composes views — rather than
-  transforming a value through an arbitrary closure.
+- **No generic value combinators.** `Rule` doesn't grow `.pullback`, or a `.map`/`??` you chain
+  repeatedly off a stored result later — see [Non-goals](#non-goals) above; `Rule` doesn't
+  change that. The two continuation `callAsFunction(_:)` overloads are not an exception: each
+  is one direct hop from this rule's `Output` straight into the very next expression — a child
+  rule's invocation or a plain value — evaluated immediately at the call site, never a
+  standalone operator you store and chain further off of. Composing more still means invoking
+  the next rule directly, the same way nesting `View`s composes views, not chaining a generic
+  combinator off an intermediate result.
 - **`.body` is not truly inaccessible — it's a documented convention, not a
   compiler-enforced one.** Swift can't make a protocol requirement less accessible than the
   protocol itself, so nothing stops a call site from writing `.body` directly. Treat it the

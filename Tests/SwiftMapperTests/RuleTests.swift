@@ -51,6 +51,19 @@ private struct ChainedWordLengthRule: Rule {
     }
 }
 
+// A rule whose body chains `UppercasingRule` into a *plain value* (not another `Rule`) via
+// the second continuation overload — the shape used to embed one rule's result as one piece
+// of a larger literal.
+private struct ChainedGreetingRule: Rule {
+    let input: String
+
+    var body: String {
+        UppercasingRule(input: input) { uppercased in
+            "HELLO, \(uppercased)!"
+        }
+    }
+}
+
 // A rule reading its `body` inside an `@Mapper`-generated builder closure, demonstrating the
 // two features compose without either requiring the other.
 @Mapper
@@ -300,6 +313,19 @@ struct RuleTests {
     @Test("A Rule's own body can tail-delegate to a chained callAsFunction(_:) composition")
     func ruleBodyTailDelegatesToChainedComposition() {
         #expect(ChainedWordLengthRule(input: "grace")() == 5)
+    }
+
+    @Test("Chaining callAsFunction(_:) into a plain value composes one Rule's result directly into a larger expression with no intermediate let binding")
+    func chainingCallAsFunctionComposesIntoAPlainValue() {
+        let greeting = UppercasingRule(input: "ada") { uppercased in
+            "HELLO, \(uppercased)!"
+        }
+        #expect(greeting == "HELLO, ADA!")
+    }
+
+    @Test("A Rule's own body can tail-delegate to a chained callAsFunction(_:) composition that produces a plain value")
+    func ruleBodyTailDelegatesToChainedPlainValueComposition() {
+        #expect(ChainedGreetingRule(input: "grace")() == "HELLO, GRACE!")
     }
 
     @Test("An existing return-heavy, explicit-.body Rule still compiles and behaves correctly once body is @RuleBuilder<Output>")

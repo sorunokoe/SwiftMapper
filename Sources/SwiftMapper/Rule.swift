@@ -85,9 +85,24 @@
 ///
 /// The whole expression above has type `PlayerPositionRule.Output` — usable anywhere that
 /// type is expected (a `body`'s tail expression, a builder field, a `let` binding, a plain
-/// function argument). `continuation` is constrained to return *another `Rule`*, never a bare
-/// transformed value — this only ever composes one rule directly into the next, the same way
-/// nesting `View`s composes views; it is not a disguised `.map` over arbitrary output types
+/// function argument).
+///
+/// A third overload covers the same shape when `continuation` produces a plain value instead
+/// of another rule — most useful when a rule's result is only one piece of a larger literal:
+///
+/// ```swift
+/// EventStatusToDateRule(input: input.status) { dateRange in
+///     InfoCardTextArrangement.threeItems(
+///         headlineTextItem: .headLine(label: input.name),
+///         subtitleTextItem: .subtitle(label: dateRange),
+///         primaryInfoTextItem: LeagueInviteCardFeatureListRule(input: input)()
+///     )
+/// }
+/// ```
+///
+/// Both overloads compose one rule directly into the next expression, the same way nesting
+/// `View`s composes views; neither is a disguised `.map` over arbitrary output types — there
+/// is still no optional-promotion, no `??` fallback, and no further chaining off the result
 /// (see [`Rule` non-goals](../../../README.md#rule-non-goals)).
 ///
 /// ## Design history
@@ -117,13 +132,15 @@
 ///
 /// ## Non-goals
 ///
-/// - **No generic value combinators.** `Rule` doesn't grow `.pullback`, `.map`, or any
-///   operator that transforms an arbitrary `Output` into some other type — SwiftMapper's
-///   top-level Non-goals section already rejects a runtime combinator library, and `Rule`
-///   doesn't change that. The chaining `callAsFunction(_:)` overload (see "Invoking a Rule"
-///   above) is not an exception: its continuation is constrained to return *another `Rule`*,
-///   never a bare value, so it composes rules — the same way nesting `View`s composes views —
-///   rather than transforming a value through an arbitrary closure.
+/// - **No generic value combinators.** `Rule` doesn't grow `.pullback`, or a `.map`/`??` you
+///   chain repeatedly off a stored result later — SwiftMapper's top-level Non-goals section
+///   already rejects a runtime combinator library, and `Rule` doesn't change that. The two
+///   continuation `callAsFunction(_:)` overloads (see "Invoking a Rule" above) are not an
+///   exception: each is one direct hop from this rule's `Output` straight into the very next
+///   expression — a child rule's invocation or a plain value — evaluated immediately at the
+///   call site, never a standalone operator you store and chain further off of. Composing
+///   more still means invoking the next rule directly, the same way nesting `View`s composes
+///   views, not chaining a generic combinator off an intermediate result.
 /// - **No recursive, multi-level tree walking**, and **no ambient/environment-style
 ///   dependency resolution** — see Design history above. `RuleBuilder` resolves exactly one
 ///   level of `.body` per composed child, statically, at the call site; it is not a rendering
@@ -173,10 +190,36 @@ public extension Rule {
     /// Chains this rule directly into another: invokes this rule, feeds its `Output` to
     /// `continuation`, and returns the *resulting* rule's own invocation — composing two
     /// rules in one expression, with no intermediate `let` binding and no `.body` at either
-    /// step. `continuation` must return another `Rule`; see "Invoking a Rule" above for why
-    /// that constraint keeps this from becoming a generic value combinator.
+    /// step.
     func callAsFunction<R: Rule>(_ continuation: (Output) -> R) -> R.Output {
         continuation(self())()
+    }
+
+    /// Chains this rule's result into a plain expression: invokes this rule, feeds its
+    /// `Output` to `continuation`, and returns whatever value `continuation` produces — with
+    /// no intermediate `let` binding and no `.body` at either step. Most useful nested inside
+    /// a larger expression (one field of a struct literal, one argument among several) where
+    /// introducing a `let` just to read one rule's result would break up the expression that
+    /// reads it:
+    ///
+    /// ```swift
+    /// EventStatusToDateRule(input: input.status) { dateRange in
+    ///     InfoCardTextArrangement.threeItems(
+    ///         headlineTextItem: .headLine(label: input.name),
+    ///         subtitleTextItem: .subtitle(label: dateRange),
+    ///         primaryInfoTextItem: LeagueInviteCardFeatureListRule(input: input)()
+    ///     )
+    /// }
+    /// ```
+    ///
+    /// Swift picks the `R: Rule` overload above whenever `continuation` returns another rule
+    /// matching the call site's expected type; this overload only ever fires otherwise (a
+    /// bare value, or a rule read as itself rather than invoked). It is still not a disguised
+    /// `.map`: there is no optional-promotion, no `??` fallback, and no further chaining off
+    /// the result — treat the returned value the same way you would any other rule's output
+    /// once you have it, with ordinary `if let`/`guard let`/`switch`.
+    func callAsFunction<Result>(_ continuation: (Output) -> Result) -> Result {
+        continuation(self())
     }
 }
 
