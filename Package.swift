@@ -29,6 +29,13 @@ let package = Package(
             dependencies: [
                 .product(name: "SwiftSyntaxMacros", package: "swift-syntax"),
                 .product(name: "SwiftCompilerPlugin", package: "swift-syntax"),
+                // Only used for its result-builder-based node initializers
+                // (e.g. `FunctionParameterListSyntax { ... }`), which build
+                // real, already-typed `SwiftSyntax` list nodes directly —
+                // never string-literal-based `Syntax`-parsing APIs. See
+                // `MapperMacro.swift`'s codegen for why this distinction
+                // matters.
+                .product(name: "SwiftSyntaxBuilder", package: "swift-syntax"),
             ]
         ),
 

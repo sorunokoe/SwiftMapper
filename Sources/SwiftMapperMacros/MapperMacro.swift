@@ -1,5 +1,6 @@
 import SwiftDiagnostics
 import SwiftSyntax
+import SwiftSyntaxBuilder
 import SwiftSyntaxMacros
 
 /// The two declaration kinds `@Mapper` can attach to. Both `StructDeclSyntax`
@@ -73,6 +74,7 @@ public struct MapperMacro: MemberMacro {
     public static func expansion(
         of node: AttributeSyntax,
         providingMembersOf declaration: some DeclGroupSyntax,
+        conformingTo protocols: [TypeSyntax],
         in context: some MacroExpansionContext
     ) throws -> [DeclSyntax] {
         guard let target = MapperTarget(declaration) else {
@@ -132,8 +134,8 @@ public struct MapperMacro: MemberMacro {
 
             let field = MapperField(
                 label: label,
-                boxedType: parameter.type.strippingParameterOnlyAnnotations.trimmedDescription,
-                parameterType: parameter.type.strippingOwnershipSpecifiers.trimmedDescription
+                boxedType: parameter.type.strippingParameterOnlyAnnotations,
+                parameterType: parameter.type.strippingOwnershipSpecifiers
             )
 
             if let firstLabel = seenCapitalizedLabels[field.capitalizedLabel] {
@@ -156,90 +158,321 @@ public struct MapperMacro: MemberMacro {
             return []
         }
 
-        let accessModifier = target.modifiers.accessModifierPrefix
-        let builderName = "Builder"
-
-        let builderClosureParameters = fields
-            .map { "        _ \($0.capitalizedLabel): Boxed<\($0.boxedType)>" }
-            .joined(separator: ",\n")
-
-        let creationArguments = fields.map { _ in ".init()" }.joined(separator: ", ")
-
-        // A single field's buildBlock returns the bare value (Swift has no
-        // one-element tuple), so the delegating call binds it to a plain
-        // `let`; two or more fields' buildBlock returns a tuple, destructured
-        // via a tuple `let` pattern. The return type always uses each
-        // field's `boxedType` (already stripped of ownership specifiers and
-        // parameter-only attributes like `@escaping`/`@autoclosure`) rather
-        // than `parameterType` — neither is valid in a function return-type
-        // position (verified: `-> @escaping () -> Int` and
-        // `-> (consuming String, Int)` both fail to compile), even though
-        // `parameterType` is required for `buildBlock`'s own *parameters*.
-        let creationBinding: String
-        let delegatingArguments: String
-        if fields.count == 1 {
-            let onlyField = fields[0]
-            creationBinding = "let \(onlyField.label) = creation(\(creationArguments))"
-            delegatingArguments = "\(onlyField.label): \(onlyField.label)"
-        } else {
-            let bindingNames = fields.map(\.label).joined(separator: ", ")
-            creationBinding = "let (\(bindingNames)) = creation(\(creationArguments))"
-            delegatingArguments = fields
-                .map { "\($0.label): \($0.label)" }
-                .joined(separator: ", ")
-        }
-
-        let buildBlockReturnType = fields.count == 1
-            ? fields[0].boxedType
-            : "(\(fields.map(\.boxedType).joined(separator: ", ")))"
-
-        let initKeyword = target.isClass ? "convenience init" : "init"
-
-        let builderInit = """
-        \(accessModifier)\(initKeyword)(
-            @\(builderName)
-            _ creation: (
-        \(builderClosureParameters)
-            ) -> \(buildBlockReturnType)
-        ) {
-            \(creationBinding)
-            self.init(\(delegatingArguments))
-        }
-        """
-
-        let buildBlockParameters = fields
-            .map { "_ \($0.label): \($0.parameterType)" }
-            .joined(separator: ", ")
-        let buildBlockBody = fields.count == 1
-            ? fields[0].label
-            : "(\(fields.map(\.label).joined(separator: ", ")))"
-
-        let builderEnum = """
-        @resultBuilder
-        \(accessModifier)enum \(builderName) {
-            \(accessModifier)static func buildBlock(\(buildBlockParameters)) -> \(buildBlockReturnType) {
-                \(buildBlockBody)
-            }
-
-            \(accessModifier)static func buildBlock<Component>(_ component: Component) -> Component {
-                component
-            }
-
-            \(accessModifier)static func buildEither<Component>(first component: Component) -> Component {
-                component
-            }
-
-            \(accessModifier)static func buildEither<Component>(second component: Component) -> Component {
-                component
-            }
-        }
-        """
-
+        // Both generated members are built as real, already-typed
+        // `SwiftSyntax` nodes end-to-end — never through
+        // `DeclSyntax(stringLiteral:)`/string interpolation — so expanding
+        // `@Mapper` never re-parses source text, no matter how many fields
+        // or how complex their types are. See `makeBuilderInit`/
+        // `makeBuilderEnum` below.
         return [
-            DeclSyntax(stringLiteral: builderInit),
-            DeclSyntax(stringLiteral: builderEnum),
+            DeclSyntax(makeBuilderInit(target: target, fields: fields)),
+            DeclSyntax(makeBuilderEnum(target: target, fields: fields)),
         ]
     }
+}
+
+/// Builds the generated `init(@Builder _ creation: (...) -> ...)` —
+/// `convenience init` for classes, plain `init` for structs — entirely out
+/// of typed `SwiftSyntax` nodes. A handful of explicit `.newline` trivia
+/// (never full re-parsed text) reproduce the same multi-line, readable
+/// layout the previous string-template implementation produced; everything
+/// else about indentation is normalized afterwards by the macro-expansion
+/// pipeline's `BasicFormat` pass.
+private func makeBuilderInit(target: MapperTarget, fields: [MapperField]) -> InitializerDeclSyntax {
+    var modifiers = target.modifiers.mirroredForGeneratedMembers
+    if target.isClass {
+        modifiers = modifiers + [DeclModifierSyntax(name: .keyword(.convenience))]
+    }
+
+    let creationParameter = FunctionParameterSyntax(
+        attributes: AttributeListSyntax {
+            AttributeSyntax(
+                attributeName: IdentifierTypeSyntax(name: .identifier("Builder")),
+                trailingTrivia: .newline
+            )
+        },
+        firstName: .wildcardToken(),
+        secondName: .identifier("creation"),
+        type: FunctionTypeSyntax(
+            leftParen: .leftParenToken(trailingTrivia: .newline),
+            parameters: creationClosureParameterList(for: fields),
+            returnClause: ReturnClauseSyntax(type: combinedBoxedType(of: fields))
+        ),
+        trailingTrivia: .newline
+    )
+
+    return InitializerDeclSyntax(
+        modifiers: modifiers,
+        signature: FunctionSignatureSyntax(
+            parameterClause: FunctionParameterClauseSyntax(
+                leftParen: .leftParenToken(trailingTrivia: .newline),
+                parameters: FunctionParameterListSyntax { creationParameter }
+            )
+        ),
+        body: CodeBlockSyntax {
+            creationBindingDecl(for: fields)
+            delegatingSelfInitCallExpr(for: fields)
+        }
+    )
+}
+
+/// Builds the generated `@resultBuilder enum Builder { ... }`, containing
+/// the field-shaped `buildBlock` plus the three fixed generic helpers
+/// (`buildBlock<Component>`, `buildEither(first:)`, `buildEither(second:)`),
+/// entirely out of typed `SwiftSyntax` nodes.
+private func makeBuilderEnum(target: MapperTarget, fields: [MapperField]) -> EnumDeclSyntax {
+    let modifiers = target.modifiers.mirroredForGeneratedMembers
+    let staticModifiers = modifiers + [DeclModifierSyntax(name: .keyword(.static))]
+
+    // A blank line between each member, matching the previous string
+    // template's layout — every member after the first gets a two-newline
+    // leading trivia (blank line + the line it starts on).
+    let blankLineBeforeMember = Trivia.newlines(2)
+
+    return EnumDeclSyntax(
+        attributes: AttributeListSyntax {
+            AttributeSyntax(
+                attributeName: IdentifierTypeSyntax(name: .identifier("resultBuilder")),
+                trailingTrivia: .newline
+            )
+        },
+        modifiers: modifiers,
+        name: .identifier("Builder"),
+        memberBlock: MemberBlockSyntax {
+            fieldBuildBlockFunc(modifiers: staticModifiers, fields: fields)
+            genericPassthroughFunc(
+                modifiers: staticModifiers,
+                name: "buildBlock",
+                firstParameterName: .wildcardToken(),
+                leadingTrivia: blankLineBeforeMember
+            )
+            genericPassthroughFunc(
+                modifiers: staticModifiers,
+                name: "buildEither",
+                firstParameterName: .identifier("first"),
+                leadingTrivia: blankLineBeforeMember
+            )
+            genericPassthroughFunc(
+                modifiers: staticModifiers,
+                name: "buildEither",
+                firstParameterName: .identifier("second"),
+                leadingTrivia: blankLineBeforeMember
+            )
+        }
+    )
+}
+
+/// `Boxed<T>` for an already-parsed field type, spliced in directly with no
+/// parsing involved.
+private func boxedType(of fieldType: TypeSyntax) -> TypeSyntax {
+    TypeSyntax(
+        IdentifierTypeSyntax(
+            name: .identifier("Boxed"),
+            genericArgumentClause: GenericArgumentClauseSyntax(
+                arguments: GenericArgumentListSyntax {
+                    GenericArgumentSyntax(argument: .type(fieldType))
+                }
+            )
+        )
+    )
+}
+
+/// A single field's `boxedType` (Swift has no one-element tuple), or a
+/// tuple of every field's `boxedType` for two or more fields. Used both as
+/// `buildBlock`'s return type and as the `creation` closure's return type
+/// (they must match).
+private func combinedBoxedType(of fields: [MapperField]) -> TypeSyntax {
+    guard fields.count > 1 else {
+        return fields[0].boxedType
+    }
+    return TypeSyntax(
+        TupleTypeSyntax(
+            elements: TupleTypeElementListSyntax {
+                for field in fields {
+                    TupleTypeElementSyntax(type: field.boxedType)
+                }
+            }
+        )
+    )
+}
+
+/// The `creation` closure's own parameter list, e.g.
+/// `_ Profile: Boxed<String>, _ Fullname: Boxed<String>` — the `_ Label:`
+/// two-part form (no external label, `Label` as the internal name) is what
+/// lets Xcode autocomplete the closure's parameter names from the field
+/// labels, capitalized. Each element is placed on its own line (matching
+/// the previous string template's layout): every element but the last gets
+/// a trailing comma immediately followed by a newline, and the last gets a
+/// bare trailing newline so the closure type's closing `)` starts its own
+/// line.
+private func creationClosureParameterList(for fields: [MapperField]) -> TupleTypeElementListSyntax {
+    TupleTypeElementListSyntax(
+        fields.enumerated().map { index, field in
+            let isLast = index == fields.count - 1
+            return TupleTypeElementSyntax(
+                firstName: .wildcardToken(),
+                secondName: .identifier(field.capitalizedLabel),
+                colon: .colonToken(),
+                type: boxedType(of: field.boxedType),
+                trailingComma: isLast ? nil : .commaToken(),
+                trailingTrivia: .newline
+            )
+        }
+    )
+}
+
+/// `.init()`, used once per field as an argument to `creation(...)`.
+private var dotInitCallExpr: FunctionCallExprSyntax {
+    FunctionCallExprSyntax(
+        calledExpression: MemberAccessExprSyntax(declName: DeclReferenceExprSyntax(baseName: .keyword(.`init`))),
+        leftParen: .leftParenToken(),
+        arguments: [],
+        rightParen: .rightParenToken()
+    )
+}
+
+/// `creation(.init(), .init(), ...)` — one `.init()` argument per field.
+private func creationCallExpr(for fields: [MapperField]) -> FunctionCallExprSyntax {
+    FunctionCallExprSyntax(
+        calledExpression: DeclReferenceExprSyntax(baseName: .identifier("creation")),
+        leftParen: .leftParenToken(),
+        arguments: LabeledExprListSyntax {
+            for _ in fields {
+                LabeledExprSyntax(expression: dotInitCallExpr)
+            }
+        },
+        rightParen: .rightParenToken()
+    )
+}
+
+/// `let profile = creation(...)` for a single field, or
+/// `let (profile, fullname) = creation(...)` for two or more, destructuring
+/// the `creation` closure's result into one local per field.
+private func creationBindingDecl(for fields: [MapperField]) -> VariableDeclSyntax {
+    let pattern: PatternSyntax
+    if fields.count == 1 {
+        pattern = PatternSyntax(IdentifierPatternSyntax(identifier: .identifier(fields[0].label)))
+    } else {
+        pattern = PatternSyntax(
+            TuplePatternSyntax(
+                elements: TuplePatternElementListSyntax {
+                    for field in fields {
+                        TuplePatternElementSyntax(pattern: IdentifierPatternSyntax(identifier: .identifier(field.label)))
+                    }
+                }
+            )
+        )
+    }
+
+    return VariableDeclSyntax(
+        bindingSpecifier: .keyword(.let),
+        bindings: PatternBindingListSyntax {
+            PatternBindingSyntax(
+                pattern: pattern,
+                initializer: InitializerClauseSyntax(value: creationCallExpr(for: fields))
+            )
+        }
+    )
+}
+
+/// `self.init(profile: profile, fullname: fullname)` — the delegating call
+/// that forwards every locally bound field to the canonical initializer.
+private func delegatingSelfInitCallExpr(for fields: [MapperField]) -> FunctionCallExprSyntax {
+    FunctionCallExprSyntax(
+        calledExpression: MemberAccessExprSyntax(
+            base: DeclReferenceExprSyntax(baseName: .keyword(.`self`)),
+            declName: DeclReferenceExprSyntax(baseName: .keyword(.`init`))
+        ),
+        leftParen: .leftParenToken(),
+        arguments: LabeledExprListSyntax {
+            for field in fields {
+                LabeledExprSyntax(
+                    label: .identifier(field.label),
+                    colon: .colonToken(),
+                    expression: DeclReferenceExprSyntax(baseName: .identifier(field.label))
+                )
+            }
+        },
+        rightParen: .rightParenToken()
+    )
+}
+
+/// The field-shaped `static func buildBlock(_ profile: String, _ fullname: String) -> (String, String) { (profile, fullname) }`
+/// (or the single-field, non-tuple form) — the one `Builder` member whose
+/// shape actually depends on the mapped type's fields.
+private func fieldBuildBlockFunc(modifiers: DeclModifierListSyntax, fields: [MapperField]) -> FunctionDeclSyntax {
+    let bodyExpr: ExprSyntax
+    if fields.count == 1 {
+        bodyExpr = ExprSyntax(DeclReferenceExprSyntax(baseName: .identifier(fields[0].label)))
+    } else {
+        bodyExpr = ExprSyntax(
+            TupleExprSyntax(
+                elements: LabeledExprListSyntax {
+                    for field in fields {
+                        LabeledExprSyntax(expression: DeclReferenceExprSyntax(baseName: .identifier(field.label)))
+                    }
+                }
+            )
+        )
+    }
+
+    return FunctionDeclSyntax(
+        modifiers: modifiers,
+        name: .identifier("buildBlock"),
+        signature: FunctionSignatureSyntax(
+            parameterClause: FunctionParameterClauseSyntax(
+                parameters: FunctionParameterListSyntax {
+                    for field in fields {
+                        FunctionParameterSyntax(
+                            firstName: .wildcardToken(),
+                            secondName: .identifier(field.label),
+                            type: field.parameterType
+                        )
+                    }
+                }
+            ),
+            returnClause: ReturnClauseSyntax(type: combinedBoxedType(of: fields))
+        ),
+        body: CodeBlockSyntax { bodyExpr }
+    )
+}
+
+/// One of the three fixed, field-count-independent `Builder` helpers:
+/// `static func buildBlock<Component>(_ component: Component) -> Component`,
+/// `static func buildEither<Component>(first component: Component) -> Component`,
+/// or the `second` variant — all three simply pass their single argument
+/// through unchanged.
+private func genericPassthroughFunc(
+    modifiers: DeclModifierListSyntax,
+    name: String,
+    firstParameterName: TokenSyntax,
+    leadingTrivia: Trivia = []
+) -> FunctionDeclSyntax {
+    FunctionDeclSyntax(
+        leadingTrivia: leadingTrivia,
+        modifiers: modifiers,
+        name: .identifier(name),
+        genericParameterClause: GenericParameterClauseSyntax(
+            parameters: GenericParameterListSyntax {
+                GenericParameterSyntax(name: .identifier("Component"))
+            }
+        ),
+        signature: FunctionSignatureSyntax(
+            parameterClause: FunctionParameterClauseSyntax(
+                parameters: FunctionParameterListSyntax {
+                    FunctionParameterSyntax(
+                        firstName: firstParameterName,
+                        secondName: .identifier("component"),
+                        type: IdentifierTypeSyntax(name: .identifier("Component"))
+                    )
+                }
+            ),
+            returnClause: ReturnClauseSyntax(type: IdentifierTypeSyntax(name: .identifier("Component")))
+        ),
+        body: CodeBlockSyntax {
+            DeclReferenceExprSyntax(baseName: .identifier("component"))
+        }
+    )
 }
 
 /// Picks the initializer whose parameter list defines the generated
@@ -441,19 +674,23 @@ private struct MarkInitializerCanonicalFixIt: FixItMessage {
 
 private struct MapperField {
     let label: String
-    /// The type used as `Boxed<T>`'s generic argument. Must not contain
-    /// ownership specifiers or parameter-only attributes (`@escaping`,
-    /// `@autoclosure`), since neither is valid in a generic-argument
-    /// position (e.g. `Boxed<consuming String>` and
+    /// The type used as `Boxed<T>`'s generic argument, kept as the
+    /// already-parsed `TypeSyntax` node the compiler produced for the
+    /// user's own initializer parameter (only structurally rewritten, via
+    /// `strippingParameterOnlyAnnotations`, never turned into a `String` and
+    /// reparsed). Must not contain ownership specifiers or parameter-only
+    /// attributes (`@escaping`, `@autoclosure`), since neither is valid in a
+    /// generic-argument position (e.g. `Boxed<consuming String>` and
     /// `Boxed<@escaping () -> Void>` are both invalid Swift).
-    let boxedType: String
+    let boxedType: TypeSyntax
     /// The type used for the generated `buildBlock`'s own parameter
-    /// declaration. This *is* a real function parameter position, so it
-    /// keeps `@escaping`/`@autoclosure` (needed to forward the value into
-    /// the struct's escaping-requiring canonical initializer) while still
-    /// dropping ownership specifiers, which the macro re-derives fresh
-    /// rather than forwards.
-    let parameterType: String
+    /// declaration, likewise kept as a `TypeSyntax` end-to-end. This *is* a
+    /// real function parameter position, so it keeps `@escaping`/
+    /// `@autoclosure` (needed to forward the value into the struct's
+    /// escaping-requiring canonical initializer) while still dropping
+    /// ownership specifiers, which the macro re-derives fresh rather than
+    /// forwards.
+    let parameterType: TypeSyntax
 
     var capitalizedLabel: String {
         label.prefix(1).uppercased() + label.dropFirst()
@@ -532,8 +769,16 @@ private extension DeclModifierListSyntax {
     /// `convenience init` and nested `Builder` enum don't need to be
     /// overridable themselves for the builder DSL to be usable from another
     /// module.
-    var accessModifierPrefix: String {
-        contains { $0.name.tokenKind == .keyword(.public) || $0.name.tokenKind == .keyword(.open) } ? "public " : ""
+    var isPublicOrOpen: Bool {
+        contains { $0.name.tokenKind == .keyword(.public) || $0.name.tokenKind == .keyword(.open) }
+    }
+
+    /// The modifier list to attach to each generated member: `[public]` if
+    /// this type is `public`/`open`, otherwise empty.
+    var mirroredForGeneratedMembers: DeclModifierListSyntax {
+        isPublicOrOpen
+            ? DeclModifierListSyntax { DeclModifierSyntax(name: .keyword(.public)) }
+            : []
     }
 }
 
