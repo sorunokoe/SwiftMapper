@@ -44,7 +44,7 @@
 /// It does **not** help resolve a child rule's result used as an intermediate `let` binding,
 /// or embedded as one argument among several in a larger struct literal — those aren't the
 /// body's own tail expression, so the builder never sees them. Calling the rule directly
-/// (`rule()`) remains the right, and only, tool there — see `Rule`'s "Invoking a Rule" section
+/// (`rule.execute()`) remains the right, and only, tool there — see `Rule`'s "Invoking a Rule" section
 /// for why that's preferred over reading `.body`.
 @resultBuilder
 public enum RuleBuilder<Output> {
@@ -56,9 +56,9 @@ public enum RuleBuilder<Output> {
 
     /// A body whose one expression constructs a child `Rule` matching `Output` — invokes it
     /// for you, the same single, explicit, non-recursive call you'd otherwise write by hand as
-    /// `rule()`.
+    /// `rule.execute()`.
     public static func buildExpression<R: Rule>(_ rule: R) -> Output where R.Output == Output {
-        rule()
+        rule.execute()
     }
 
     /// The same as the overload above, but for a `body` whose `Output` is `Optional` of a
@@ -70,7 +70,7 @@ public enum RuleBuilder<Output> {
     /// one case this library actually needs: an Optional-returning `Rule` composed from
     /// non-optional child rules.
     public static func buildExpression<R: Rule>(_ rule: R) -> Output where Output == R.Output? {
-        rule()
+        rule.execute()
     }
 
     public static func buildBlock(_ component: Output) -> Output {
@@ -117,7 +117,7 @@ extension RuleBuilder {
     /// `Rule` whose `Output` matches one array element — invoked for you, same as every other
     /// `RuleBuilder` overload.
     public static func buildExpression<R: Rule, Element>(_ rule: R) -> Element where Output == [Element], R.Output == Element {
-        rule()
+        rule.execute()
     }
 
     /// Collects one `Element` per `body` line into the final `[Element]` array.

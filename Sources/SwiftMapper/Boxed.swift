@@ -19,7 +19,7 @@
 /// field's value.
 ///
 /// When a field's value comes from a `Rule`, the trailing closure can construct the rule
-/// directly — `Boxed` invokes it for you, so no call site needs to write `.body` or `()`:
+/// directly — `Boxed` invokes it for you, so no call site needs to write `.body` or `.execute()`:
 ///
 /// ```swift
 /// DateBanner { TournamentInfoBannerRule(input: .init(eventStatus: status, playerPosition: position)) }
@@ -35,7 +35,7 @@
 /// ```swift
 /// var body: InfoCardBarArrangement {
 ///     // ...
-///     return ScheduledInfoBannerRule(input: someInput)()
+///     return ScheduledInfoBannerRule(input: someInput).execute()
 /// }
 /// ```
 public struct Boxed<T>: Sendable {
@@ -53,11 +53,11 @@ public struct Boxed<T>: Sendable {
     /// SwiftUI renderer resolving a child `View` for you.
     ///
     /// This is what lets a builder field read a `Rule` construction directly, with no
-    /// trailing `()`:
+    /// trailing `.execute()`:
     ///
     /// ```swift
-    /// // equivalent — a builder field needs no trailing () at all:
-    /// TournamentType { TournamentTypeRule(input: tournamentInfo.tournamentType)() }
+    /// // equivalent — a builder field needs no trailing .execute() at all:
+    /// TournamentType { TournamentTypeRule(input: tournamentInfo.tournamentType).execute() }
     /// TournamentType { TournamentTypeRule(input: tournamentInfo.tournamentType) }
     /// ```
     ///
@@ -68,7 +68,7 @@ public struct Boxed<T>: Sendable {
     /// you'd otherwise write by hand as `rule()`.
     @inlinable
     public func callAsFunction<R: Rule>(_ creation: () -> R) -> T where R.Output == T {
-        creation()()
+        creation().execute()
     }
 
     /// Resolves an already-constructed `Rule` value by invoking it directly — the same
@@ -82,7 +82,7 @@ public struct Boxed<T>: Sendable {
     /// non-recursive invocation, equivalent to calling `rule()` directly.
     @inlinable
     public func callAsFunction<R: Rule>(_ rule: R) -> T where R.Output == T {
-        rule()
+        rule.execute()
     }
 
     /// The same as the closure-taking overload above, but for an `Optional`-typed field whose
@@ -95,14 +95,14 @@ public struct Boxed<T>: Sendable {
     /// `Rule`'s own `body`.
     @inlinable
     public func callAsFunction<R: Rule>(_ creation: () -> R) -> T where T == R.Output? {
-        creation()()
+        creation().execute()
     }
 
     /// The same as the bare-value overload above, but for an `Optional`-typed field resolved
     /// from an already-constructed, non-optional `Rule` value.
     @inlinable
     public func callAsFunction<R: Rule>(_ rule: R) -> T where T == R.Output? {
-        rule()
+        rule.execute()
     }
 }
 

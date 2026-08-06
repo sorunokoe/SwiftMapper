@@ -28,7 +28,7 @@ private struct GreetingRule: Rule {
     }
 }
 
-// A rule whose Output another rule can be chained into via `callAsFunction(_:)`, mirroring
+// A rule whose Output another rule can be chained into via `execute(_:)`, mirroring
 // the "count the uppercased word's length" kind of linear dependency a Mapper/Interactor
 // composes today.
 private struct WordLengthRule: Rule {
@@ -40,12 +40,12 @@ private struct WordLengthRule: Rule {
 }
 
 // A rule whose body chains `UppercasingRule` directly into `WordLengthRule` via
-// `callAsFunction(_:)` — no intermediate `let` binding, no `.body` at either step.
+// `execute(_:)` — no intermediate `let` binding, no `.body` at either step.
 private struct ChainedWordLengthRule: Rule {
     let input: String
 
     var body: Int {
-        UppercasingRule(input: input) { uppercased in
+        UppercasingRule(input: input).execute { uppercased in
             WordLengthRule(input: uppercased)
         }
     }
@@ -58,7 +58,7 @@ private struct ChainedGreetingRule: Rule {
     let input: String
 
     var body: String {
-        UppercasingRule(input: input) { uppercased in
+        UppercasingRule(input: input).execute { uppercased in
             "HELLO, \(uppercased)!"
         }
     }
@@ -302,45 +302,45 @@ struct RuleTests {
         #expect(OptionalRoutingRule(input: .silence).body == nil)
     }
 
-    @Test("callAsFunction() invokes a Rule and returns the same value as reading .body directly")
-    func callAsFunctionMatchesBody() {
+    @Test("execute() invokes a Rule and returns the same value as reading .body directly")
+    func executeMatchesBody() {
         let rule = UppercasingRule(input: "ada")
-        #expect(rule() == rule.body)
-        #expect(rule() == "ADA")
+        #expect(rule.execute() == rule.body)
+        #expect(rule.execute() == "ADA")
     }
 
-    @Test("callAsFunction() invokes a context-needing Rule the same way .body does")
-    func callAsFunctionMatchesBodyForContextNeedingRule() {
+    @Test("execute() invokes a context-needing Rule the same way .body does")
+    func executeMatchesBodyForContextNeedingRule() {
         let rule = GreetingRule(input: .init(name: "Hopper", isFormal: true), salutationProvider: { "Dr." })
-        #expect(rule() == rule.body)
-        #expect(rule() == "Dr. Hopper")
+        #expect(rule.execute() == rule.body)
+        #expect(rule.execute() == "Dr. Hopper")
     }
 
-    @Test("Chaining callAsFunction(_:) composes one Rule directly into another with no intermediate let binding")
-    func chainingCallAsFunctionComposesTwoRules() {
-        let chained = UppercasingRule(input: "ada") { uppercased in
+    @Test("Chaining execute(_:) composes one Rule directly into another with no intermediate let binding")
+    func chainingExecuteComposesTwoRules() {
+        let chained = UppercasingRule(input: "ada").execute { uppercased in
             WordLengthRule(input: uppercased)
         }
         #expect(chained == 3)
-        #expect(chained == WordLengthRule(input: "ADA")())
+        #expect(chained == WordLengthRule(input: "ADA").execute())
     }
 
-    @Test("A Rule's own body can tail-delegate to a chained callAsFunction(_:) composition")
+    @Test("A Rule's own body can tail-delegate to a chained execute(_:) composition")
     func ruleBodyTailDelegatesToChainedComposition() {
-        #expect(ChainedWordLengthRule(input: "grace")() == 5)
+        #expect(ChainedWordLengthRule(input: "grace").execute() == 5)
     }
 
-    @Test("Chaining callAsFunction(_:) into a plain value composes one Rule's result directly into a larger expression with no intermediate let binding")
-    func chainingCallAsFunctionComposesIntoAPlainValue() {
-        let greeting = UppercasingRule(input: "ada") { uppercased in
+    @Test("Chaining execute(_:) into a plain value composes one Rule's result directly into a larger expression with no intermediate let binding")
+    func chainingExecuteComposesIntoAPlainValue() {
+        let greeting = UppercasingRule(input: "ada").execute { uppercased in
             "HELLO, \(uppercased)!"
         }
         #expect(greeting == "HELLO, ADA!")
     }
 
-    @Test("A Rule's own body can tail-delegate to a chained callAsFunction(_:) composition that produces a plain value")
+    @Test("A Rule's own body can tail-delegate to a chained execute(_:) composition that produces a plain value")
     func ruleBodyTailDelegatesToChainedPlainValueComposition() {
-        #expect(ChainedGreetingRule(input: "grace")() == "HELLO, GRACE!")
+        #expect(ChainedGreetingRule(input: "grace").execute() == "HELLO, GRACE!")
     }
 
     @Test("body's @RuleBuilder collects one array element per line, mixing child Rules and plain values, with no array literal or trailing () needed")
