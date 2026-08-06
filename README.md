@@ -687,6 +687,16 @@ This is purely a `Boxed<T>` addition (see `Sources/SwiftMapper/BoxedCollection.s
 — it needed no changes to `@Mapper`'s code generation, since any `Array`-typed
 field already type-checks against plain `Boxed<T>` today.
 
+`mapping:` also has a `Rule`-returning overload, so each element can be composed
+from a per-element `Rule` directly — the same "no trailing `.execute()`" ergonomic
+that a single-value field gets from `Boxed`'s own `Rule` overloads:
+
+```swift
+Items(mapping: domain.items) { domainItem in
+    ItemRule(input: domainItem)
+}
+```
+
 ## Diagnostics
 
 `@Mapper` reports errors at compile time, pointing at the exact syntax that's

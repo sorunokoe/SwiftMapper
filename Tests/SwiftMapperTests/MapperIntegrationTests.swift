@@ -330,6 +330,29 @@ struct MapperIntegrationTests {
         #expect(built == Cart(itemTitles: ["Apple", "Bread"]))
     }
 
+    @Test("Boxed(mapping:_:) composes an array field element-by-element from a per-element Rule, with no trailing .execute()")
+    func collectionFieldElementWiseCompositionViaRule() {
+        struct DomainItem {
+            let name: String
+        }
+
+        struct CapitalizedTitleRule: Rule {
+            let input: DomainItem
+
+            var body: String {
+                input.name.capitalized
+            }
+        }
+
+        let domainItems = [DomainItem(name: "apple"), DomainItem(name: "bread")]
+
+        let built = Cart { ItemTitles in
+            ItemTitles(mapping: domainItems) { CapitalizedTitleRule(input: $0) }
+        }
+
+        #expect(built == Cart(itemTitles: ["Apple", "Bread"]))
+    }
+
     @Test("Classes support the generated convenience builder initializer")
     func classBuilderSupport() {
         let built = PersonBox { FirstName, LastName in
