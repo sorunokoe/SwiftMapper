@@ -579,6 +579,19 @@ capability rather than fixing something existing — this repo asks for a
 short written plan up front for anything that grows the library's surface
 area.
 
+## Performance
+
+- **Runtime: zero-cost.** The generated builder initializer fully inlines
+  away in a release build — no allocation, no dynamic dispatch, no
+  per-field overhead versus writing the initializer call by hand.
+- **Compile time: no re-parsing.** `@Mapper` expands entirely into typed
+  `SwiftSyntax` nodes, never through string interpolation — expanding it
+  doesn't re-parse any generated source text, regardless of field count or
+  type complexity.
+
+See [docs/BENCHMARKING.md](docs/BENCHMARKING.md) for how to reproduce these
+numbers yourself and what to expect as your project grows.
+
 ## Documentation
 
 Full symbol documentation (including this README's examples) renders via

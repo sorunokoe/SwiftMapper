@@ -46,6 +46,15 @@ let package = Package(
             dependencies: ["SwiftMapperMacros"]
         ),
 
+        // Dev-only microbenchmark: confirms the `@Mapper`-generated builder
+        // initializer stays a genuinely zero-cost runtime abstraction (see
+        // `docs/BENCHMARKING.md`). Not part of the `SwiftMapper` product,
+        // so consumers who only depend on that product never build it.
+        .executableTarget(
+            name: "Bench",
+            dependencies: ["SwiftMapper"]
+        ),
+
         .testTarget(
             name: "SwiftMapperTests",
             dependencies: [
