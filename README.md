@@ -5,26 +5,32 @@
 [![Platform compatibility](https://img.shields.io/endpoint?url=https%3A%2F%2Fswiftpackageindex.com%2Fapi%2Fpackages%2Fsorunokoe%2FSwiftMapper%2Fbadge%3Ftype%3Dplatforms)](https://swiftpackageindex.com/sorunokoe/SwiftMapper)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-A tiny Swift macro that turns a struct's own initializer into a composable,
-type-safe "field builder" DSL — without a runtime combinator library, and
-without hand-writing a `@resultBuilder` for every type you map into.
+A small Swift library for writing data mappers that read like a DSL and
+type-check at compile time — no runtime combinator library, no
+hand-written `@resultBuilder` for every type you map into.
 
-## The problem
+It's two things that compose:
 
-Hand-written data mappers tend to collapse into one of two shapes:
+- **`@Mapper`** — a macro that turns your struct's own initializer into a
+  labeled builder, one closure per field.
+- **`Rule`** — a one-property protocol (plus `RuleBuilder` and `Boxed`) for
+  when a single field's logic outgrows one line. See
+  [Composing field logic with `Rule`](#composing-field-logic-with-rule).
 
-1. **A flat initializer call** that's easy to get subtly wrong (arguments in
-   the wrong order, a field silently left mapped to the wrong source field),
-   and where every field's mapping logic is squeezed onto one line or hidden
-   behind a private helper method.
+## Why
+
+Hand-written mappers tend to end up one of two ways:
+
+1. **A flat initializer call.** Easy to get subtly wrong — arguments in the
+   wrong order, a field silently mapped from the wrong source — and every
+   field's logic squeezed onto one line or hidden in a private helper.
 2. **A generic `Mapper<Input, Output>` combinator library** (`.map`,
-   `.pullback`, `.optional()`, ...) that solves the readability problem but
-   introduces a whole runtime abstraction, its own debugging story, and a
-   learning curve — often more machinery than the mapping logic it wraps.
+   `.pullback`, `.optional()`...). Fixes readability, but drags in a whole
+   runtime abstraction, its own debugging story, and a learning curve.
 
-SwiftMapper takes a third path: keep each field's mapping logic as a small,
-labeled, ordinary closure, and let the compiler check that every field is
-supplied, in the right shape, at compile time — with zero runtime cost.
+SwiftMapper takes a third path: each field gets its own small, labeled
+closure, and the compiler checks that every one is supplied — at compile
+time, with zero runtime cost.
 
 ```swift
 @Mapper
@@ -54,13 +60,11 @@ ProfileHeaderData { Profile, Fullname, Nickname in
 }
 ```
 
-Each labeled slot (`Profile`, `Fullname`, `Nickname`) is just a plain closure
-call — no combinators, no runtime tracing, nothing to import except
-`SwiftMapper` itself. This is the same pattern proven by hand across several
-mappers before being generalized here; see [How it works](#how-it-works) for
+Each labeled slot is just a plain closure call — no combinators, nothing to
+import except `SwiftMapper` itself. See [How it works](#how-it-works) for
 what the macro actually generates.
 
-## Installation
+## Install
 
 Add SwiftMapper as a package dependency in `Package.swift`:
 
@@ -81,12 +85,12 @@ and add `SwiftMapper` to any target that needs it:
 
 ## Usage
 
-1. Write your struct exactly as you normally would, with a single explicit
-   initializer that sets every field you want the builder to cover.
+1. Write your struct as usual, with a single explicit initializer that sets
+   every field you want the builder to cover.
 2. Attach `@Mapper` to the struct.
-3. Call the struct's new builder initializer with one labeled closure per
-   initializer parameter (Xcode autocompletes the labels from the
-   initializer's own parameter names, capitalized).
+3. Call the new builder initializer with one labeled closure per parameter
+   (Xcode autocompletes the labels from your initializer's own parameter
+   names, capitalized).
 
 ```swift
 import SwiftMapper
@@ -111,68 +115,34 @@ let address = Address { Street, City, PostalCode in
 }
 ```
 
-Structs that nest other `@Mapper` structs compose naturally — a nested
-struct's own builder initializer can be called from inside an outer struct's
-builder closure, the same way you'd construct it anywhere else.
+Structs nest naturally — a nested `@Mapper` struct's builder initializer can
+be called from inside an outer struct's builder closure, the same way you'd
+construct it anywhere else.
 
-### Requirements (v1)
+### Requirements
 
-- `@Mapper` must be attached to a `struct` or `class`.
-- The type must declare **exactly one** explicit initializer, *or*, if it
-  declares more than one, either exactly one of them must be marked
-  `@MapperCanonical`, or exactly one of them must be "memberwise-shaped" —
-  its parameter labels are an exact set match against the type's own stored
-  property names — which `@Mapper` auto-detects with no marker needed (see
-  [Multiple initializers](#multiple-initializers) below). That
-  initializer's parameter list — labels, types, and order — defines the
-  generated builder. Properties not part of that initializer (for example
-  an `id` given a fresh default value inside the initializer body) are left
-  untouched.
-- For a class, the generated additive initializer is always a `convenience
-  init` delegating to the class's own designated (canonical) initializer —
-  `@Mapper` never generates a designated initializer, so it never needs to
-  know about a superclass's `super.init(...)` call.
-- Initializer parameters must be simple `label: Type` parameters: no
-  variadics, no unlabeled (`_`) parameters, no parameter packs. Ownership
-  specifiers (`consuming`, `borrowing`) on a parameter are supported and
-  don't affect the generated builder's field type. Parameter-only attributes
-  (`@escaping`, `@autoclosure`) are also stripped from the field's `Boxed<T>`
-  type, while type-level attributes that are part of the type itself (e.g.
-  `@MainActor`, `@Sendable` on a function-typed field) are preserved.
-- Generic structs are supported, including `where` clauses and constraints
-  on the generic parameters. `@Mapper` is a *member* macro, so the generated
-  builder initializer and its nested `Builder` enum sit lexically inside the
-  type's own body and see its generic parameters the same way any other
-  member would — no extra syntax is needed:
+- `@Mapper` attaches to a `struct` or `class` with exactly one explicit
+  initializer — or, if there's more than one, either one marked
+  `@MapperCanonical`, or one whose parameter labels exactly match the type's
+  stored property names (auto-detected, no marker needed). See
+  [Multiple initializers](#multiple-initializers).
+- Initializer parameters must be plain `label: Type` — no variadics, no
+  unlabeled (`_`) parameters, no parameter packs. `consuming`/`borrowing`
+  and `@escaping`/`@autoclosure` are fine and don't change the generated
+  field's type.
+- Generic structs work as-is, `where` clauses included — `@Mapper` is a
+  member macro, so the generated builder sees the type's own generic
+  parameters like any other member would.
+- The type must not already declare a member named `Builder` — that's the
+  name the generated result-builder enum uses.
 
-  ```swift
-  @Mapper
-  struct LabeledValue<Value: Equatable>: Equatable {
-      let label: String
-      let value: Value
-
-      init(label: String, value: Value) {
-          self.label = label
-          self.value = value
-      }
-  }
-
-  let count = LabeledValue<Int> { Label, Value in
-      Label { "count" }
-      Value { items.count }
-  }
-  ```
-- The type must not already declare its own member named `Builder` — that's
-  the name the generated nested result-builder enum always uses.
-
-These constraints are intentionally narrow for v1 — see
-[Non-goals](#non-goals) for why.
+See [Diagnostics](#diagnostics) for what happens when these aren't met.
 
 ## How it works
 
-`@Mapper` is a Swift **member macro**. Given the struct above, it reads the
-one explicit initializer's parameter list and adds two members: a second,
-additive initializer, and a matching `@resultBuilder` enum.
+`@Mapper` is a Swift **member macro**. It reads your one initializer and
+adds two members: a second, additive initializer, and a matching
+`@resultBuilder` enum.
 
 ```swift
 extension Address {
@@ -209,36 +179,29 @@ extension Address {
 }
 ```
 
-The `buildEither` overloads (plus the generic single-field `buildBlock`) are what
-let `if`/`else` and `switch` appear directly inside the builder closure — see
-[Branching](#branching) below.
+The `buildEither` overloads (plus the single-field `buildBlock`) are what let
+`if`/`else` and `switch` appear directly inside the builder closure — see
+[Branching](#branching).
 
-`Boxed<T>` (shipped once, in the `SwiftMapper` library) is a stateless
-wrapper whose only job is to give each closure parameter a readable name via
-`callAsFunction`, so `Street { ... }` reads like a keyword but is just an
-ordinary function call. Your existing, plain initializer is left completely
-untouched — the builder initializer is purely additive.
+`Boxed<T>` (shipped in the `SwiftMapper` library) just gives each closure
+parameter a readable name via `callAsFunction`, so `Street { ... }` reads
+like a keyword but is an ordinary function call. Your existing initializer
+is left untouched — the builder initializer is purely additive.
 
 ## Non-goals
 
-- **Not a generic `Mapper<Input, Output>` runtime library.** No combinators,
-  no `.pullback`, no runtime tracing/diagnostics object. If you need that,
-  this library isn't it — by design.
-- **Not a validation framework.** SwiftMapper does not add required-field
-  checks, error accumulation, or anything beyond what the Swift compiler
-  already guarantees (every builder parameter must be supplied, because
-  `buildBlock`'s signature says so).
-- **Not a codegen tool for entire structs.** SwiftMapper only adds a builder
-  initializer next to a struct you've already written; it never generates
-  your model types.
+- **Not a generic `Mapper<Input, Output>` library.** No combinators, no
+  `.pullback`, no runtime tracing object.
+- **Not a validation framework.** No required-field checks or error
+  accumulation beyond what the compiler already guarantees.
+- **Not a codegen tool for whole structs.** It only adds a builder
+  initializer next to a struct you've already written.
 
-## Composing smaller rules with `Rule`
+## Composing field logic with `Rule`
 
-`@Mapper` solves the "one struct, several fields" problem. `Rule` is a
-complementary, much smaller piece that solves a different problem: what does
-a single field's mapping *logic* look like once it outgrows one line, so it
-doesn't collapse back into a private helper method buried in the mapper
-class?
+`@Mapper` solves "one struct, several fields." `Rule` solves a smaller
+problem: what a single field's mapping logic looks like once it outgrows one
+line, so it doesn't collapse into a private helper method.
 
 ```swift
 public protocol Rule<Input, Output> {
@@ -249,83 +212,75 @@ public protocol Rule<Input, Output> {
 }
 ```
 
-That's the entire protocol — deliberately mirroring `View.body`: one
-computed-property requirement, no combinators, no environment. A conforming
-type is either:
+That's the whole protocol — deliberately mirroring `View.body`: one computed
+property, no combinators, no environment.
 
-- **Pure** (no stored dependencies beyond `input`) — construct it right at
-  the call site, the same way `Text("x")` needs no injection:
+**Pure rules** need only `input` — construct them at the call site, the same
+way `Text("x")` needs no injection:
 
-  ```swift
-  struct TournamentTypeRule: Rule {
-      let input: DomainTournamentType
+```swift
+struct TournamentTypeRule: Rule {
+    let input: DomainTournamentType
 
-      var body: TournamentType {
-          switch input {
-          case .bullsEye: .bullsEye
-          case .puttPutt: .puttPutt
-          // ...
-          }
-      }
-  }
+    var body: TournamentType {
+        switch input {
+        case .bullsEye: .bullsEye
+        case .puttPutt: .puttPutt
+        // ...
+        }
+    }
+}
 
-  TournamentType { TournamentTypeRule(input: domain.tournamentType).execute() }
-  ```
+TournamentType { TournamentTypeRule(input: domain.tournamentType).execute() }
+```
 
-- **Context-needing** — has explicit, constructor-injected collaborators
-  alongside `input`, the same pattern any other dependency-consuming mapper
-  already uses. Bundle a small `Input` type when a rule needs more than one
-  value:
+**Context-needing rules** take extra, constructor-injected collaborators —
+bundle a small `Input` type when a rule needs more than one value:
 
-  ```swift
-  struct TournamentInfoBannerRule: Rule {
-      struct Input {
-          let eventStatus: DomainEventStatus
-          let playerPosition: DomainPlayerPosition
-      }
+```swift
+struct TournamentInfoBannerRule: Rule {
+    struct Input {
+        let eventStatus: DomainEventStatus
+        let playerPosition: DomainPlayerPosition
+    }
 
-      let input: Input
-      let placementBannerMapper: PlacementBannerToPresentationMapper
-      let scheduledToTagTextMapper: ScheduledStatusToTagTextPresentationMapper
+    let input: Input
+    let placementBannerMapper: PlacementBannerToPresentationMapper
+    let scheduledToTagTextMapper: ScheduledStatusToTagTextPresentationMapper
 
-      var body: InfoCardBarArrangement { /* ... */ }
-  }
-  ```
+    var body: InfoCardBarArrangement { /* ... */ }
+}
+```
 
-`Rule` and `@Mapper` compose freely — a `Rule`'s `body` is an ordinary place
-to construct and invoke an `@Mapper`-generated builder initializer, and a
-builder closure field is an ordinary place to construct and invoke a `Rule`.
-Neither requires the other.
+`Rule` and `@Mapper` compose freely — a `Rule`'s `body` can construct and
+invoke a `@Mapper` builder, and a builder closure can construct and invoke a
+`Rule`. Neither needs the other.
 
-### Invoking a `Rule` — `.execute()`, not `.body`
+### Calling a rule — `.execute()`, not `.body`
 
-`body` is a protocol requirement, so it can't be made any less accessible than `Rule` itself —
-but it's meant to be read in exactly two places: `RuleBuilder`'s own implementation, and (via
-the tail-delegation sugar below) a `Rule`'s own body. Everywhere else — a `Mapper`, an
-interactor, a test, an intermediate `let` binding — call the rule instead:
+Call `.execute()` everywhere outside `RuleBuilder`'s own implementation:
 
 ```swift
 let mapped = TournamentTypeRule(input: domain.tournamentType).execute()
 ```
 
-`.execute()` is exactly `{ body }`. The reason to prefer it: `.body` reads like an
-ordinary stored property, which invites chaining further operations directly onto it
-(`.body.map { ... }`, `.body ?? fallback`) — exactly the generic-combinator shape this library
-rejects (see [Non-goals](#non-goals)). Branch with plain `if let`/`guard let`/`switch` instead:
+`.execute()` is just `{ body }`. Prefer it over `.body` because `.body`
+reads like an ordinary stored property, which invites chaining more
+operations off it (`.body.map { ... }`, `.body ?? fallback`) — exactly the
+combinator shape this library avoids. Branch with plain `if let`/`guard
+let`/`switch` instead:
 
 ```swift
-// ❌ chains a combinator directly off the rule's result
+// ❌ chains a combinator off the rule's result
 let arrangement = ScheduledStatusToTagTextRule(input: scheduled).execute().value.map { ... } ?? .none
 
 // ✅ invoke, then branch with ordinary control flow
 guard let text = ScheduledStatusToTagTextRule(input: scheduled).execute().value else { return .none }
 ```
 
-A rule also supports continuation chaining — composing this rule directly into another
-expression by constructing it with a trailing closure, no `.execute()` at that step. This is
-`callAsFunction`, the same "call it like a function" sugar Swift gives any other type — Swift
-attaches a trailing closure to it automatically whenever a rule's initializer call is
-immediately followed by one:
+A rule can also chain directly into the next expression via
+`callAsFunction`, with no `.execute()` at that step — Swift attaches a
+trailing closure automatically right after a rule's initializer call:
 
 ```swift
 PlayerPositionFromExpandedInfoRule(input: expandedInfo) { playerPosition in
@@ -333,12 +288,9 @@ PlayerPositionFromExpandedInfoRule(input: expandedInfo) { playerPosition in
 }
 ```
 
-The whole expression above has type `PlayerPositionRule.Output` — usable anywhere that type is
-expected. This reads no differently than constructing any other rule — there's no separate
-method name to remember at this call site.
-
-A second overload covers the same shape when the continuation produces a plain value instead of
-another rule — most useful when a rule's result is only one piece of a larger literal:
+The whole expression has type `PlayerPositionRule.Output`. A second overload
+covers the same shape when the continuation produces a plain value instead
+of another rule:
 
 ```swift
 EventStatusToDateRule(input: input.status) { dateRange in
@@ -350,33 +302,26 @@ EventStatusToDateRule(input: input.status) { dateRange in
 }
 ```
 
-Both overloads compose one rule directly into the next expression, the same way nesting
-`View`s composes views — neither is a disguised `.map` over arbitrary output types: there is
-still no optional-promotion, no `??` fallback, and no further chaining off the result, see
-[`Rule` non-goals](#rule-non-goals). Only the zero-argument invocation — the one call site that
-genuinely benefits from an explicit, unambiguous verb — uses `.execute()`; a continuation is
-already self-describing via its closure parameter, so it uses ordinary call syntax instead.
+### `RuleBuilder`'s tail-delegation sugar
 
-### Composing without a wrapper — `RuleBuilder`'s tail-delegation sugar
-
-`body` is itself declared `@RuleBuilder<Output>` (see `Sources/SwiftMapper/RuleBuilder.swift`),
-mirroring `@ViewBuilder var body: Body { get }` on SwiftUI's `View`. When a `Rule`'s `body` is
-**pure tail delegation to one child rule — no `return` anywhere in the property** — you can
-construct that child directly, with no `.execute()` and no `.body`, the same way you'd drop
-a `Text("x")` straight into a SwiftUI `body` with no separate "render" step:
+`body` is declared `@RuleBuilder<Output>` (see
+`Sources/SwiftMapper/RuleBuilder.swift`), mirroring `@ViewBuilder var body:
+Body { get }`. When a `Rule`'s `body` is **pure tail delegation to one child
+rule — no `return` anywhere in the property** — construct that child
+directly, no `.execute()` needed:
 
 ```swift
 struct TournamentTypeBadgeRule: Rule {
     let input: DomainTournamentType
 
     var body: TournamentType {
-        TournamentTypeRule(input: input)   // invoked for you — no wrapper needed
+        TournamentTypeRule(input: input)   // invoked for you
     }
 }
 ```
 
-This also works for `switch`/`if`-`else` used as the body's one expression, mixing plain
-values and child rules per branch:
+This also works for `switch`/`if`-`else` as the body's sole expression,
+mixing plain values and child rules per branch:
 
 ```swift
 var body: TournamentLeaderboardFiltersData? {
@@ -391,16 +336,9 @@ var body: TournamentLeaderboardFiltersData? {
 }
 ```
 
-Note above that `CourseRoundLeaderboardFiltersRule`'s own `Output` is the non-optional
-`TournamentLeaderboardFiltersData`, while this `body`'s `Output` is the optional
-`TournamentLeaderboardFiltersData?` — `RuleBuilder` has a second `buildExpression` overload
-specifically for this "Optional body, non-optional child rule" shape, so it resolves exactly
-the same way a plain `nil`-literal branch does.
-
-When `Output` is itself an array (`[Element]`), `RuleBuilder` also supports one line per
-array element — the same "one row per line" shape `ForEach`'s content closure has, but for a
-fixed, statically known set of rows written directly in `body`, rather than iterated at
-runtime:
+And for an array-typed `Output`, one rule (or value) per line — the same
+"one row per line" shape as `ForEach`, but for a fixed, statically known set
+of rows:
 
 ```swift
 var body: [DataState<TournamentSettingsItemData>] {
@@ -412,123 +350,64 @@ var body: [DataState<TournamentSettingsItemData>] {
 }
 ```
 
-Each line is either a plain `Element` value or a child `Rule` producing `Element`, resolved
-the same single, non-recursive way as every other `RuleBuilder` overload. The classic
-array-literal form (`[a(), b(), c()]`) remains exactly as valid as before — it hits the plain
-`Output`-typed overloads, unchanged — this is additive sugar, not a replacement, so pick
-whichever reads better at a given call site.
+This only resolves the body's own tail expression, one level deep. It stops
+helping the moment a `return` appears anywhere in the property (Swift falls
+back to ordinary getter semantics for the whole property — a general Swift
+rule, not specific to `RuleBuilder`), or when a child rule's value is:
 
-**The one hard constraint:** Swift only applies a result builder to a property when that
-property contains **zero explicit `return` statements** anywhere (a general Swift rule, not
-specific to `RuleBuilder` — the same is true of `@ViewBuilder`). The moment a `body` has a
-`return` — including inside a `guard ... else { return }` — Swift falls back to ordinary,
-unsugared getter semantics for the **entire** property, and you're back to invoking a child
-rule explicitly. This is why `RuleBuilder` is purely additive: every existing `Rule`
-conformance, written with `guard`/`return` throughout, keeps compiling completely unchanged,
-whether or not it ever adopts the sugar.
+- assigned to an intermediate `let` and used later — use the chaining
+  `callAsFunction(_:)` overload above instead,
+- one argument among several in a larger initializer or function call,
+- the receiver of a further member-access chain,
+- inside a nested closure like `.map { ChildRule(input: $0) }`.
 
-It also only ever resolves the property's own tail expression — it does **not** help when a
-child rule's value is:
-
-- assigned to an intermediate `let` and used later (e.g. for pattern matching before deciding
-  what to return) — use the chaining `callAsFunction(_:)` overload above instead when the
-  dependency is linear,
-- embedded as one argument among several inside a larger struct initializer or function call,
-- the receiver of a further member-access chain (`SomeRule(input: x).values.flatMap(...)` — a
-  bare `Rule` value has no `.values`; invoke it first),
-- inside a nested closure like `.map { ChildRule(input: $0) }` (the closure has its own body,
-  ungoverned by the outer property's `@RuleBuilder` attribute).
-
-For all of these, invoke the rule explicitly:
+For any of those, invoke the rule explicitly:
 
 ```swift
 var body: InfoCardBarArrangement {
-    let placementBanner = placementBannerMapper.map(...)          // intermediate let: needs () downstream
+    let placementBanner = placementBannerMapper.map(...)
     if case .visible = placementBanner { return placementBanner }
     guard case let .scheduled(scheduled) = onEnum(of: input.eventStatus) else { return .none }
-    return ScheduledInfoBannerRule(input: .init(scheduled: scheduled)).execute()   // return present: no sugar here either
+    return ScheduledInfoBannerRule(input: .init(scheduled: scheduled)).execute()
 }
 ```
 
-A `@Mapper`-generated builder field is a `Boxed<T>` value (see
-[How it works](#how-it-works) above), called with a trailing closure that must produce `T`.
-`Boxed<T>` has a second `callAsFunction` overload that accepts a closure returning
-`some Rule<_, T>` instead, and invokes it for you — useful when a builder field's whole value
-comes from one child rule, independent of whether that rule's own internals used the
-`RuleBuilder` sugar or explicit invocation:
+A `@Mapper`-generated `Boxed<T>` field also accepts a closure returning
+`some Rule<_, T>` directly, invoking it for you:
 
 ```swift
 // equivalent — Boxed invokes the rule for you when the closure returns a Rule:
 TournamentType { TournamentTypeRule(input: domain.tournamentType) }
 ```
 
-`Boxed<T>` also resolves this when `T` itself is `Optional` and the rule's `Output` is the
-non-optional wrapped type — e.g. an `@Mapper` field declared `let parsScoresChart:
-ProfileMetricsParsScoresChart?` can still be filled directly from a rule whose `Output` is the
-non-optional `ProfileMetricsParsScoresChart`, with no `Optional(...)` wrapping or `as
-ProfileMetricsParsScoresChart?` cast at the call site:
-
-```swift
-// ParsScoresChart's stored type is `ProfileMetricsParsScoresChart?`; the rule's Output is the
-// non-optional `ProfileMetricsParsScoresChart` — Boxed promotes it for you:
-ParsScoresChart { ProfileMetricsParsScoresChartRule(input: domain.parsMetrics, chartViewFeature: chartViewFeature) }
-```
-
-None of this is a tree-walking engine or ambient lookup — `RuleBuilder` resolves exactly one
-level of a composed child's invocation, statically, at the call site, the same as `Boxed`'s
-`Rule`-accepting overloads do for a builder field.
-
-### Why `body` and not `map(_:)`
-
-An earlier version of this protocol used a single `func map(_ input: Input)
--> Output` requirement instead. It was reshaped to store `input` and expose
-`body` as a computed property to read closer to SwiftUI's own vocabulary.
-Two more literal readings of "make it exactly like `View`" were considered
-and rejected along the way — a recursive, framework-walked tree of `Rule`s
-resolved the way SwiftUI privately resolves `some View` (replicating that
-here means writing that walker ourselves — exactly the runtime
-combinator/engine this library rejects below; `body`'s `@RuleBuilder<Output>`
-is a lighter-weight, non-recursive relative of this idea, not a reversal of
-the rejection — nothing walks a `Rule` tree at runtime), and zero-argument
-leaf construction relying on a framework to supply `input` ambiently
-(environment-style implicit DI, forbidden by `CONTRIBUTING.md`'s
-explicit-threading rule). `Rule` keeps the part that's achievable without an
-engine or ambient lookup: `body` as a computed property, `input` always
-threaded in explicitly.
+This also resolves the case where the field's type is `Optional` and the
+rule's `Output` is the non-optional wrapped type — no `Optional(...)`
+wrapping or cast needed at the call site.
 
 ### `Rule` non-goals
 
-- **No generic value combinators.** `Rule` doesn't grow `.pullback`, or a `.map`/`??` you chain
-  repeatedly off a stored result later — see [Non-goals](#non-goals) above; `Rule` doesn't
-  change that. The two continuation `callAsFunction(_:)` overloads are not an exception: each
-  is one direct hop from this rule's `Output` straight into the very next expression — a child
-  rule's invocation or a plain value — evaluated immediately at the call site, never a
-  standalone operator you store and chain further off of. Composing more still means invoking
-  the next rule directly, the same way nesting `View`s composes views, not chaining a generic
-  combinator off an intermediate result.
-- **`.body` is not truly inaccessible — it's a documented convention, not a
-  compiler-enforced one.** Swift can't make a protocol requirement less accessible than the
-  protocol itself, so nothing stops a call site from writing `.body` directly. Treat it the
-  same way you'd treat reading `someView.body` directly in SwiftUI: it compiles, and it's
-  still wrong. Enforce this in review (a quick `grep -rn '\.body' Sources/` sweep, excluding
-  `RuleBuilder`/`Boxed` themselves, catches it), not by relying on the type system.
-- **No recursive, multi-level tree walking, and no ambient/environment-style
-  dependency resolution.** Per [`CONTRIBUTING.md`](CONTRIBUTING.md),
-  context/dependency parameters must be threaded explicitly.
-  `RuleBuilder` resolves exactly one level per composed child,
-  statically; `Rule` is still a naming/shape convention, not a DI container
-  or a rendering engine — a pure rule needs no injection because it has
-  nothing to inject beyond its own `input`, not because of a hidden lookup
-  mechanism.
-- **Not retrofitted onto every existing mapper.** Adopt it for new,
-  genuinely single-input leaf rules; a mapper whose natural shape takes
-  several labeled parameters, or that dispatches across a sealed type before
-  delegating to a specialized rule, keeps that shape.
+- **No generic value combinators.** No `.pullback`, no `.map`/`??` chained
+  off a stored result. The continuation `callAsFunction(_:)` overloads are
+  one direct hop into the next expression, evaluated immediately — not a
+  standalone operator you chain further off of.
+- **`.body` is a convention, not compiler-enforced.** Swift can't make a
+  protocol requirement less accessible than the protocol itself, so nothing
+  stops a call site from writing `.body` directly. Treat it like reading
+  `someView.body` in SwiftUI — it compiles, and it's still wrong. Catch it
+  in review (`grep -rn '\.body' Sources/`, excluding `RuleBuilder`/`Boxed`
+  themselves).
+- **No tree-walking, no ambient dependency resolution.** Per
+  [CONTRIBUTING.md](CONTRIBUTING.md), dependencies are always threaded
+  explicitly. `RuleBuilder` resolves exactly one level per composed child,
+  statically — there's no DI container or rendering engine underneath.
+- **Not retrofitted onto every mapper.** Adopt it for new, genuinely
+  single-input leaf rules; a mapper that naturally takes several labeled
+  parameters keeps that shape.
 
 ## Branching
 
-`if`/`else` and `switch` can appear **directly** inside a builder closure —
-each branch just needs to produce the same field type:
+`if`/`else` and `switch` can appear directly inside a builder closure — each
+branch just needs to produce the same field type:
 
 ```swift
 Handicap { Trend in
@@ -553,22 +432,9 @@ PersonData { FirstName, LastName, Age in
 }
 ```
 
-This works because the generated builder implements `buildEither(first:)` /
-`buildEither(second:)` (for `if`/`else` and `switch`) alongside a generic
-single-field `buildBlock`, so a branch that sets just one field type-checks
-the same way an unconditional statement would.
-
-### Optional fields need an explicit `else`
-
-A plain `if` with **no** `else` is *not* supported, even for a field whose
-declared type is already `Optional`. Swift's result-builder desugaring always
-wraps a no-`else` branch's value in one more level of `Optional` via
-`buildOptional` — for a field that's already `Optional<T>`, that produces
-`T??` instead of `T?`, which won't type-check. This isn't a SwiftMapper
-limitation so much as a general pitfall of Swift's result-builder machinery
-when a branch's own type is already Optional, so the generated builder
-intentionally doesn't implement `buildOptional` at all — write the `else`
-branch explicitly instead:
+A plain `if` with **no** `else` isn't supported, even for an already-Optional
+field — Swift's result-builder desugaring would wrap it in one more level of
+`Optional`, producing `T??`. Write the `else` explicitly:
 
 ```swift
 NicknameData { FirstName, Nickname in
@@ -581,22 +447,17 @@ NicknameData { FirstName, Nickname in
 }
 ```
 
-### Not supported: partial-field branches
-
-A branch may only set **exactly one** field per statement inside it (or all
-of the struct's fields, if the branch is the closure's sole statement).
-Setting a subset of two-or-more fields conditionally isn't supported — split
-those fields into their own `if`/`else` (or `switch`) blocks instead.
+Each branch may only set **exactly one** field per statement (or all fields,
+if the branch is the closure's only statement) — split multi-field
+conditions into their own `if`/`else` blocks.
 
 ## Multiple initializers
 
-`@Mapper` needs exactly one initializer to define the generated builder's
-fields, but real-world types sometimes need more than one — a hand-written
-`Decodable.init(from:)`, or a convenience initializer that call sites
-needing the builder never use. When that happens, `@Mapper` first tries to
-auto-detect which initializer is canonical: if exactly one initializer's
-parameter labels are an exact set match against the type's own stored
-property names, that one is used automatically, no marker required:
+`@Mapper` needs exactly one initializer to define the builder's fields, but
+real types sometimes have more than one — a hand-written `Decodable.init(from:)`,
+say. `@Mapper` first tries auto-detection: if exactly one initializer's
+parameter labels exactly match the type's stored property names, that one is
+used automatically:
 
 ```swift
 @Mapper
@@ -604,8 +465,7 @@ struct User: Decodable {
     let id: UUID
     let name: String
 
-    // Auto-detected: its labels exactly match this type's stored
-    // properties, and init(from:) clearly isn't a candidate.
+    // Auto-detected: labels match the stored properties; init(from:) isn't a candidate.
     init(id: UUID, name: String) {
         self.id = id
         self.name = name
@@ -624,12 +484,9 @@ let user = User { Id, Name in
 }
 ```
 
-If auto-detection can't find exactly one unambiguous candidate — for
-example, two initializers whose labels both happen to match the stored
-properties (just reordered) — attach `@MapperCanonical` to the initializer
-that should define the generated builder's fields. It always takes priority
-over auto-detection, and every other initializer is left completely
-untouched:
+If auto-detection can't find exactly one unambiguous candidate, attach
+`@MapperCanonical` to the initializer that should define the builder — it
+always wins, and every other initializer is left untouched:
 
 ```swift
 @Mapper
@@ -643,33 +500,26 @@ struct User: Decodable {
         self.name = name
     }
 
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.id = try container.decode(UUID.self, forKey: .id)
-        self.name = try container.decode(String.self, forKey: .name)
-    }
+    init(from decoder: Decoder) throws { /* ... */ }
 }
 ```
 
-`@MapperCanonical` is a marker only — it never generates any code of its
-own. It has no effect (and isn't required) when a type declares only a
-single initializer. Marking more than one initializer `@MapperCanonical` on
-the same type is a compile-time error, and so is the rare case where
-auto-detection also can't find exactly one unambiguous candidate — see
-[Diagnostics](#diagnostics) below.
+`@MapperCanonical` is a marker only — it generates no code, and has no
+effect on a type with just one initializer. Marking two initializers on the
+same type is a compile-time error, and so is auto-detection finding more
+than one candidate — see [Diagnostics](#diagnostics).
 
 ## Collection fields
 
-A `[Element]`-typed field already works with the plain closure form — it's
-just `Boxed<[Element]>`, and `Boxed<T>` is generic over any `T`:
+Array fields already work with the plain closure form:
 
 ```swift
 Items { domain.items.map(ItemViewModel.init) }
 ```
 
-For a *different* source collection mapped element-by-element, `Boxed`
-also ships a `mapping:` overload so that stays a labeled call instead of a
-bare `.map { }`:
+For a different source collection mapped element-by-element, `Boxed` also
+ships a `mapping:` overload so the call stays labeled instead of a bare
+`.map { }`:
 
 ```swift
 @Mapper
@@ -688,13 +538,8 @@ let cart = Cart { ItemTitles in
 }
 ```
 
-This is purely a `Boxed<T>` addition (see `Sources/SwiftMapper/BoxedCollection.swift`)
-— it needed no changes to `@Mapper`'s code generation, since any `Array`-typed
-field already type-checks against plain `Boxed<T>` today.
-
-`mapping:` also has a `Rule`-returning overload, so each element can be composed
-from a per-element `Rule` directly — the same "no trailing `.execute()`" ergonomic
-that a single-value field gets from `Boxed`'s own `Rule` overloads:
+`mapping:` also has a `Rule`-returning overload, so each element can come
+from a per-element `Rule` directly, no trailing `.execute()`:
 
 ```swift
 Items(mapping: domain.items) { domainItem in
@@ -704,37 +549,23 @@ Items(mapping: domain.items) { domainItem in
 
 ## Diagnostics
 
-`@Mapper` reports errors at compile time, pointing at the exact syntax that's
-wrong:
+`@Mapper` reports errors at compile time, pointing at the exact syntax
+that's wrong — with a Fix-It where one makes sense:
 
-- **Not a struct or class** — `@Mapper` can only be attached to a struct or
-  class.
-- **Missing initializer** — the type must declare at least one initializer
-  whose parameters define the mapped fields.
-- **Multiple initializers** — emitted at every initializer when a type
-  declares more than one, none of them is marked `@MapperCanonical`, and
-  auto-detection can't find exactly one unambiguous memberwise-shaped
-  candidate, with a **Fix-It** that inserts `@MapperCanonical` above each
-  initializer. See [Multiple initializers](#multiple-initializers) above.
-- **Multiple canonical initializers** — emitted at each initializer marked
-  `@MapperCanonical` when more than one is marked on the same type; only
-  one is allowed.
-- **Unsupported (variadic) parameters** — not supported by the generated
-  builder.
-- **Unlabeled parameters** (`_ name: String`) — flagged with a **Fix-It**
-  that promotes the parameter's internal name to also be its label (turning
-  `_ name: String` into `name name: String`), since that's the fix Xcode can
-  apply automatically in nearly every case.
-- **No fields** — the initializer must declare at least one parameter.
-- **Colliding capitalized field labels** — emitted when two initializer
-  parameters capitalize to the same generated builder closure parameter
-  name (for example `name` and `Name`), which would otherwise silently
-  produce an invalid, duplicate-named parameter in the generated builder
-  initializer. Rename one of the two parameters to fix it.
-- **Existing `Builder` member collision** — emitted when the type already
-  declares its own member named `Builder`, which is the fixed name the
-  generated nested result-builder enum always uses. Rename that member, or
-  don't apply `@Mapper` to this type.
+- **Not a struct or class.**
+- **Missing initializer.**
+- **Multiple initializers**, none canonical or auto-detected — Fix-It
+  inserts `@MapperCanonical` above each one.
+- **Multiple canonical initializers** — only one `@MapperCanonical` is
+  allowed per type.
+- **Unsupported (variadic) parameters.**
+- **Unlabeled parameters** (`_ name: String`) — Fix-It promotes the internal
+  name to also be the label.
+- **No fields** — the initializer needs at least one parameter.
+- **Colliding capitalized field labels** — e.g. `name` and `Name` would
+  otherwise produce a duplicate-named builder parameter. Rename one.
+- **Existing `Builder` member collision** — rename that member, or don't
+  apply `@Mapper` here.
 
 ## Development
 
