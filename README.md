@@ -321,24 +321,27 @@ let arrangement = ScheduledStatusToTagTextRule(input: scheduled).execute().value
 guard let text = ScheduledStatusToTagTextRule(input: scheduled).execute().value else { return .none }
 ```
 
-A second `execute` overload chains one rule directly into another — invoking this rule,
-feeding its `Output` to a continuation, and returning the *resulting* rule's own invocation,
-with no intermediate `let` binding:
+A rule also supports continuation chaining — composing this rule directly into another
+expression by constructing it with a trailing closure, no `.execute()` at that step. This is
+`callAsFunction`, the same "call it like a function" sugar Swift gives any other type — Swift
+attaches a trailing closure to it automatically whenever a rule's initializer call is
+immediately followed by one:
 
 ```swift
-PlayerPositionFromExpandedInfoRule(input: expandedInfo).execute { playerPosition in
+PlayerPositionFromExpandedInfoRule(input: expandedInfo) { playerPosition in
     PlayerPositionRule(input: .init(playerPosition: playerPosition, positionScore: positionScore))
 }
 ```
 
 The whole expression above has type `PlayerPositionRule.Output` — usable anywhere that type is
-expected.
+expected. This reads no differently than constructing any other rule — there's no separate
+method name to remember at this call site.
 
-A third overload covers the same shape when the continuation produces a plain value instead of
+A second overload covers the same shape when the continuation produces a plain value instead of
 another rule — most useful when a rule's result is only one piece of a larger literal:
 
 ```swift
-EventStatusToDateRule(input: input.status).execute { dateRange in
+EventStatusToDateRule(input: input.status) { dateRange in
     InfoCardTextArrangement.threeItems(
         headlineTextItem: .headLine(label: input.name),
         subtitleTextItem: .subtitle(label: dateRange),
@@ -350,7 +353,9 @@ EventStatusToDateRule(input: input.status).execute { dateRange in
 Both overloads compose one rule directly into the next expression, the same way nesting
 `View`s composes views — neither is a disguised `.map` over arbitrary output types: there is
 still no optional-promotion, no `??` fallback, and no further chaining off the result, see
-[`Rule` non-goals](#rule-non-goals).
+[`Rule` non-goals](#rule-non-goals). Only the zero-argument invocation — the one call site that
+genuinely benefits from an explicit, unambiguous verb — uses `.execute()`; a continuation is
+already self-describing via its closure parameter, so it uses ordinary call syntax instead.
 
 ### Composing without a wrapper — `RuleBuilder`'s tail-delegation sugar
 
@@ -426,7 +431,7 @@ It also only ever resolves the property's own tail expression — it does **not*
 child rule's value is:
 
 - assigned to an intermediate `let` and used later (e.g. for pattern matching before deciding
-  what to return) — use the chaining `execute(_:)` overload above instead when the
+  what to return) — use the chaining `callAsFunction(_:)` overload above instead when the
   dependency is linear,
 - embedded as one argument among several inside a larger struct initializer or function call,
 - the receiver of a further member-access chain (`SomeRule(input: x).values.flatMap(...)` — a
@@ -495,7 +500,7 @@ threaded in explicitly.
 
 - **No generic value combinators.** `Rule` doesn't grow `.pullback`, or a `.map`/`??` you chain
   repeatedly off a stored result later — see [Non-goals](#non-goals) above; `Rule` doesn't
-  change that. The two continuation `execute(_:)` overloads are not an exception: each
+  change that. The two continuation `callAsFunction(_:)` overloads are not an exception: each
   is one direct hop from this rule's `Output` straight into the very next expression — a child
   rule's invocation or a plain value — evaluated immediately at the call site, never a
   standalone operator you store and chain further off of. Composing more still means invoking

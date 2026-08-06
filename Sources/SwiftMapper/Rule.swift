@@ -73,25 +73,27 @@
 /// guard let text = ScheduledStatusToTagTextRule(input: scheduled).execute().value else { return .none }
 /// ```
 ///
-/// A second `execute` overload chains one rule directly into another — invoking this rule,
-/// feeding its `Output` to `continuation`, and returning the *resulting* rule's own
-/// invocation, with no intermediate `let` binding and no `.body` at either step:
+/// A rule also supports continuation chaining — composing this rule directly into another
+/// expression by constructing it with a trailing closure, no `.execute()` at that step, the
+/// same "call it like a function" ergonomic Swift's `callAsFunction` gives any other type:
 ///
 /// ```swift
-/// PlayerPositionFromExpandedInfoRule(input: expandedInfo).execute { playerPosition in
+/// PlayerPositionFromExpandedInfoRule(input: expandedInfo) { playerPosition in
 ///     PlayerPositionRule(input: .init(playerPosition: playerPosition, positionScore: positionScore))
 /// }
 /// ```
 ///
 /// The whole expression above has type `PlayerPositionRule.Output` — usable anywhere that
 /// type is expected (a `body`'s tail expression, a builder field, a `let` binding, a plain
-/// function argument).
+/// function argument). This reads no differently than constructing any other rule — the
+/// trailing closure is Swift attaching to the constructed rule's own `callAsFunction`, not a
+/// separate method call to remember.
 ///
-/// A third overload covers the same shape when `continuation` produces a plain value instead
+/// A second overload covers the same shape when `continuation` produces a plain value instead
 /// of another rule — most useful when a rule's result is only one piece of a larger literal:
 ///
 /// ```swift
-/// EventStatusToDateRule(input: input.status).execute { dateRange in
+/// EventStatusToDateRule(input: input.status) { dateRange in
 ///     InfoCardTextArrangement.threeItems(
 ///         headlineTextItem: .headLine(label: input.name),
 ///         subtitleTextItem: .subtitle(label: dateRange),
@@ -103,7 +105,10 @@
 /// Both overloads compose one rule directly into the next expression, the same way nesting
 /// `View`s composes views; neither is a disguised `.map` over arbitrary output types — there
 /// is still no optional-promotion, no `??` fallback, and no further chaining off the result
-/// (see [`Rule` non-goals](../../../README.md#rule-non-goals)).
+/// (see [`Rule` non-goals](../../../README.md#rule-non-goals)). Only the zero-argument
+/// invocation — the one call site that genuinely benefits from an explicit, unambiguous verb
+/// (see above) — uses `.execute()`; a continuation is already self-describing via its closure
+/// parameter, so it uses ordinary call syntax instead.
 ///
 /// ## Design history
 ///
@@ -135,7 +140,7 @@
 /// - **No generic value combinators.** `Rule` doesn't grow `.pullback`, or a `.map`/`??` you
 ///   chain repeatedly off a stored result later — SwiftMapper's top-level Non-goals section
 ///   already rejects a runtime combinator library, and `Rule` doesn't change that. The two
-///   continuation `execute(_:)` overloads (see "Invoking a Rule" above) are not an
+///   continuation `callAsFunction(_:)` overloads (see "Invoking a Rule" above) are not an
 ///   exception: each is one direct hop from this rule's `Output` straight into the very next
 ///   expression — a child rule's invocation or a plain value — evaluated immediately at the
 ///   call site, never a standalone operator you store and chain further off of. Composing
@@ -187,23 +192,26 @@ public extension Rule {
         body
     }
 
-    /// Chains this rule directly into another: invokes this rule, feeds its `Output` to
-    /// `continuation`, and returns the *resulting* rule's own invocation — composing two
-    /// rules in one expression, with no intermediate `let` binding and no `.body` at either
-    /// step.
-    func execute<R: Rule>(_ continuation: (Output) -> R) -> R.Output {
+    /// Chains this rule directly into another: constructing this rule with a trailing
+    /// closure invokes it, feeds its `Output` to `continuation`, and returns the *resulting*
+    /// rule's own invocation — composing two rules in one expression, with no intermediate
+    /// `let` binding, no `.body`, and no explicit `.execute()` at either step. This is
+    /// `callAsFunction`, not a named method — Swift attaches the trailing closure to it
+    /// automatically whenever a rule's initializer call is immediately followed by one.
+    func callAsFunction<R: Rule>(_ continuation: (Output) -> R) -> R.Output {
         continuation(execute()).execute()
     }
 
-    /// Chains this rule's result into a plain expression: invokes this rule, feeds its
-    /// `Output` to `continuation`, and returns whatever value `continuation` produces — with
-    /// no intermediate `let` binding and no `.body` at either step. Most useful nested inside
-    /// a larger expression (one field of a struct literal, one argument among several) where
+    /// Chains this rule's result into a plain expression: constructing this rule with a
+    /// trailing closure invokes it, feeds its `Output` to `continuation`, and returns
+    /// whatever value `continuation` produces — with no intermediate `let` binding, no
+    /// `.body`, and no explicit `.execute()` at either step. Most useful nested inside a
+    /// larger expression (one field of a struct literal, one argument among several) where
     /// introducing a `let` just to read one rule's result would break up the expression that
     /// reads it:
     ///
     /// ```swift
-    /// EventStatusToDateRule(input: input.status).execute { dateRange in
+    /// EventStatusToDateRule(input: input.status) { dateRange in
     ///     InfoCardTextArrangement.threeItems(
     ///         headlineTextItem: .headLine(label: input.name),
     ///         subtitleTextItem: .subtitle(label: dateRange),
@@ -218,7 +226,7 @@ public extension Rule {
     /// `.map`: there is no optional-promotion, no `??` fallback, and no further chaining off
     /// the result — treat the returned value the same way you would any other rule's output
     /// once you have it, with ordinary `if let`/`guard let`/`switch`.
-    func execute<Result>(_ continuation: (Output) -> Result) -> Result {
+    func callAsFunction<Result>(_ continuation: (Output) -> Result) -> Result {
         continuation(execute())
     }
 }
