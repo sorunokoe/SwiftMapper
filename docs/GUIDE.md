@@ -98,7 +98,7 @@ struct TournamentTypeRule: Rule {
     }
 }
 
-TournamentType { TournamentTypeRule(input: domain.tournamentType).execute() }
+TournamentType { TournamentTypeRule(input: domain.tournamentType) }
 ```
 
 **Context-needing rules** take extra, constructor-injected collaborators —
@@ -241,10 +241,13 @@ var body: InfoCardBarArrangement {
 ```
 
 A `@Mapper`-generated `Boxed<T>` field also accepts a closure returning
-`some Rule<_, T>` directly, invoking it for you:
+`some Rule<_, T>` directly, invoking it for you — so `.execute()` is
+optional inside a builder field (only a standalone `let`/`return`, as
+above, needs it explicitly):
 
 ```swift
 // equivalent — Boxed invokes the rule for you when the closure returns a Rule:
+TournamentType { TournamentTypeRule(input: domain.tournamentType).execute() }
 TournamentType { TournamentTypeRule(input: domain.tournamentType) }
 ```
 

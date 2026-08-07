@@ -91,12 +91,15 @@ struct TournamentTypeRule: Rule {
     }
 }
 
-TournamentType { TournamentTypeRule(input: domain.tournamentType).execute() }
+TournamentType { TournamentTypeRule(input: domain.tournamentType) }
 ```
 
 One computed property, no combinators, no environment — deliberately
-mirroring `View.body`. `Rule` and `@Mapper` compose freely in either
-direction. See [docs/GUIDE.md](docs/GUIDE.md) for chaining rules,
+mirroring `View.body`. A builder field invokes a `Rule` it's handed
+directly — no `.execute()` needed inside a `@Mapper` closure; that's only
+for standalone use (`let value = SomeRule(input: x).execute()`). `Rule`
+and `@Mapper` compose freely in either direction. See
+[docs/GUIDE.md](docs/GUIDE.md) for chaining rules,
 branching (`if`/`switch` inside a builder), multiple initializers,
 collection fields, and the full diagnostics list.
 
