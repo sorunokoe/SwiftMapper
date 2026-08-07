@@ -105,7 +105,7 @@
 /// Both overloads compose one rule directly into the next expression, the same way nesting
 /// `View`s composes views; neither is a disguised `.map` over arbitrary output types — there
 /// is still no optional-promotion, no `??` fallback, and no further chaining off the result
-/// (see [`Rule` non-goals](../../../README.md#rule-non-goals)). Only the zero-argument
+/// (see [`Rule` non-goals](../../../docs/GUIDE.md#rule-non-goals)). Only the zero-argument
 /// invocation — the one call site that genuinely benefits from an explicit, unambiguous verb
 /// (see above) — uses `.execute()`; a continuation is already self-describing via its closure
 /// parameter, so it uses ordinary call syntax instead.

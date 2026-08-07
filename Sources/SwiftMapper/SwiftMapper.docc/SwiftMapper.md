@@ -70,4 +70,5 @@ one, matches its stored properties exactly.
 ### Guides
 
 For generics, class support, multiple initializers, collection fields,
-branching, and the full diagnostics list, see the project README.
+branching, and the full diagnostics list, see the project README and
+[docs/GUIDE.md](https://github.com/sorunokoe/SwiftMapper/blob/main/docs/GUIDE.md).
