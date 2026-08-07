@@ -129,15 +129,14 @@ let sameAddress = Address(
 ```
 
 Both initializers are always generated together, and neither replaces the
-other — use whichever reads best at a call site. The one place they
-genuinely differ is composing a field from a `Rule` (see
-[Composing field logic with `Rule`](#composing-field-logic-with-rule)): the
-`Builder`-DSL closure needs no `.execute()` (`Street { SomeRule(input: x) }`),
-while the keyword initializer does (`street: { SomeRule(input: x).execute() }`)
-— each `Builder`-DSL field is its own independent statement, so `Boxed` can
-resolve a plain value vs. a `Rule` per field, but the keyword initializer's
-fields are ordinary arguments in one shared call, which Swift resolves as a
-single overload rather than per-argument.
+other — use whichever reads best at a call site. A field composed from a
+`Rule` (see
+[Composing field logic with `Rule`](#composing-field-logic-with-rule)) needs
+no `.execute()` in *either* one — `street: { SomeRule(input: x) }` works
+the same way `Street { SomeRule(input: x) }` does. Each keyword field is
+independently marked with its own per-field `@resultBuilder`, so it resolves
+a plain value or a child `Rule` on its own, exactly like a `Builder`-DSL
+field does via `Boxed`.
 
 Structs nest naturally — a nested `@Mapper` struct's builder initializer can
 be called from inside an outer struct's builder closure, the same way you'd

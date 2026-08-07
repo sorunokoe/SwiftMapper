@@ -231,21 +231,33 @@ struct MapperIntegrationTests {
         #expect(built == PersonData(firstName: "Grace", lastName: "Hopper", age: 37))
     }
 
-    @Test("Keyword initializer fields built from a Rule need an explicit .execute(), unlike a Builder-DSL field")
-    func keywordInitFieldFromRuleNeedsExecute() {
+    @Test("Keyword initializer fields built from a Rule need no .execute(), same as a Builder-DSL field")
+    func keywordInitFieldFromRuleNeedsNoExecute() {
         struct UppercasedRule: Rule {
             let input: String
 
             var body: String { input.uppercased() }
         }
 
+        // No `.execute()` — the keyword initializer's per-field
+        // `@resultBuilder` resolves the child `Rule`'s `body` directly,
+        // the same one-level resolution a `Builder`-DSL field already
+        // gets from `Boxed`.
         let built = PersonData(
+            firstName: { UppercasedRule(input: "ada") },
+            lastName: { "Lovelace" },
+            age: { 36 }
+        )
+
+        // `.execute()` still compiles too — it's just no longer required.
+        let builtWithExecute = PersonData(
             firstName: { UppercasedRule(input: "ada").execute() },
             lastName: { "Lovelace" },
             age: { 36 }
         )
 
         #expect(built == PersonData(firstName: "ADA", lastName: "Lovelace", age: 36))
+        #expect(built == builtWithExecute)
     }
 
     @Test("Keyword initializer supports an Optional field, including nil")

@@ -49,9 +49,13 @@ final class MapperMacroExpansionTests: XCTestCase {
                     self.init(profile: profile, fullname: fullname)
                 }
 
+                private typealias __MapperFieldBuilder0 = RuleBuilder<String>
+
+                private typealias __MapperFieldBuilder1 = RuleBuilder<String>
+
                 public init(
-                    profile: () -> String,
-                    fullname: () -> String
+                    @__MapperFieldBuilder0 profile: () -> String,
+                    @__MapperFieldBuilder1 fullname: () -> String
                 ) {
                     self.init(profile: profile(), fullname: fullname())
                 }
@@ -110,8 +114,10 @@ final class MapperMacroExpansionTests: XCTestCase {
                     self.init(text: text)
                 }
 
+                private typealias __MapperFieldBuilder0 = RuleBuilder<String>
+
                 init(
-                    text: () -> String
+                    @__MapperFieldBuilder0 text: () -> String
                 ) {
                     self.init(text: text())
                 }
@@ -170,8 +176,10 @@ final class MapperMacroExpansionTests: XCTestCase {
                     self.init(render: render)
                 }
 
+                private typealias __MapperFieldBuilder0 = RuleBuilder<@MainActor () -> Int>
+
                 init(
-                    render: () -> @MainActor () -> Int
+                    @__MapperFieldBuilder0 render: () -> @MainActor () -> Int
                 ) {
                     self.init(render: render())
                 }
@@ -271,9 +279,13 @@ final class MapperMacroExpansionTests: XCTestCase {
                     self.init(id: id, name: name)
                 }
 
+                private typealias __MapperFieldBuilder0 = RuleBuilder<String>
+
+                private typealias __MapperFieldBuilder1 = RuleBuilder<String>
+
                 init(
-                    id: () -> String,
-                    name: () -> String
+                    @__MapperFieldBuilder0 id: () -> String,
+                    @__MapperFieldBuilder1 name: () -> String
                 ) {
                     self.init(id: id(), name: name())
                 }
@@ -348,8 +360,10 @@ final class MapperMacroExpansionTests: XCTestCase {
                     self.init(value: value)
                 }
 
+                private typealias __MapperFieldBuilder0 = RuleBuilder<String>
+
                 init(
-                    value: () -> String
+                    @__MapperFieldBuilder0 value: () -> String
                 ) {
                     self.init(value: value())
                 }
@@ -594,9 +608,13 @@ final class MapperMacroExpansionTests: XCTestCase {
                     self.init(id: id, name: name)
                 }
 
+                private typealias __MapperFieldBuilder0 = RuleBuilder<String>
+
+                private typealias __MapperFieldBuilder1 = RuleBuilder<String>
+
                 init(
-                    id: () -> String,
-                    name: () -> String
+                    @__MapperFieldBuilder0 id: () -> String,
+                    @__MapperFieldBuilder1 name: () -> String
                 ) {
                     self.init(id: id(), name: name())
                 }
@@ -683,9 +701,13 @@ final class MapperMacroExpansionTests: XCTestCase {
                     self.init(id: id, name: name)
                 }
 
+                private typealias __MapperFieldBuilder0 = RuleBuilder<String>
+
+                private typealias __MapperFieldBuilder1 = RuleBuilder<String>
+
                 init(
-                    id: () -> String,
-                    name: () -> String
+                    @__MapperFieldBuilder0 id: () -> String,
+                    @__MapperFieldBuilder1 name: () -> String
                 ) {
                     self.init(id: id(), name: name())
                 }
@@ -784,9 +806,13 @@ final class MapperMacroExpansionTests: XCTestCase {
                     self.init(label: label, value: value)
                 }
 
+                private typealias __MapperFieldBuilder0 = RuleBuilder<String>
+
+                private typealias __MapperFieldBuilder1 = RuleBuilder<Value>
+
                 init(
-                    label: () -> String,
-                    value: () -> Value
+                    @__MapperFieldBuilder0 label: () -> String,
+                    @__MapperFieldBuilder1 value: () -> Value
                 ) {
                     self.init(label: label(), value: value())
                 }
@@ -895,8 +921,10 @@ final class MapperMacroExpansionTests: XCTestCase {
                     self.init(text: text)
                 }
 
+                private typealias __MapperFieldBuilder0 = RuleBuilder<String>
+
                 convenience init(
-                    text: () -> String
+                    @__MapperFieldBuilder0 text: () -> String
                 ) {
                     self.init(text: text())
                 }
@@ -961,8 +989,10 @@ final class MapperMacroExpansionTests: XCTestCase {
                     self.init(text: text)
                 }
 
+                private typealias __MapperFieldBuilder0 = RuleBuilder<String>
+
                 public convenience init(
-                    text: () -> String
+                    @__MapperFieldBuilder0 text: () -> String
                 ) {
                     self.init(text: text())
                 }

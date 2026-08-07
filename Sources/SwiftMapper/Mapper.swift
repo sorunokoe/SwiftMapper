@@ -115,20 +115,27 @@
 /// ```
 ///
 /// Both initializers are always generated together and neither replaces the
-/// other — pick whichever reads best at a given call site. The one place
-/// they genuinely differ: a field built from a `Rule` needs an explicit
-/// `.execute()` in the keyword initializer (`profile: { SomeRule(input: x).execute() }`),
-/// whereas the same field in the `Builder`-DSL closure needs no `.execute()`
-/// at all (`Profile { SomeRule(input: x) }`) — `Boxed`'s `callAsFunction`
-/// overloads resolve that automatically. This isn't a limitation specific
-/// to `@Mapper`: each `Builder`-DSL field is its own independent statement,
-/// so Swift can resolve `Boxed`'s two `callAsFunction` overloads (plain
-/// value vs. `Rule`) separately per field. The keyword initializer's fields
-/// are ordinary arguments in one shared call instead, and Swift resolves an
-/// overloaded function's entire argument list as a single unit — so a
-/// single `() -> T` parameter type can't *also* accept an un-executed
-/// `Rule` without either combinatorial overloads or requiring arbitrary
-/// value types to conform to `Rule`, neither of which `@Mapper` does.
+/// other — pick whichever reads best at a given call site. A field built
+/// from a `Rule` needs no `.execute()` in *either* one:
+///
+/// ```swift
+/// ProfileHeaderData(
+///     profile: { ProfileConfigurationRule(input: domain.avatarURL) },
+///     fullname: { .loaded(domain.fullName) },
+///     nickname: { domain.playerName }
+/// )
+/// ```
+///
+/// Each keyword-initializer parameter is independently marked with its own
+/// per-field `@resultBuilder` (a private, per-position `RuleBuilder<T>`
+/// typealias the macro also generates — an implementation detail, never
+/// meant to be referenced directly), so every field's closure resolves a
+/// plain value or a child `Rule` on its own, the same one-level resolution
+/// `Rule.body` already gets from `RuleBuilder`. Because that resolution is
+/// entirely per-closure, there's no combinatorial blow-up across fields no
+/// matter how many of them mix plain values and rules in the same call —
+/// this only works because each field is independently attributed, not
+/// because `@Mapper` special-cases `Rule` at the whole-initializer level.
 ///
 /// ## Requirements (v1)
 ///
@@ -154,7 +161,23 @@
 ///   generic parameters the same way any other member would.
 /// - The type must not already declare its own member named `Builder`
 ///   (the name the generated nested result-builder enum always uses).
-@attached(member, names: named(init), named(Builder))
+/// - The canonical initializer must declare **at most 32 fields** — the
+///   hard limit on how many fields the generated keyword initializer can
+///   cover (see `keywordFieldBuilderMaxFieldCount` in `MapperMacro.swift`
+///   for why this is a fixed cap rather than an unbounded list). The
+///   generated `Builder`-DSL initializer has no such limit.
+@attached(
+    member,
+    names: named(init), named(Builder),
+        named(__MapperFieldBuilder0), named(__MapperFieldBuilder1), named(__MapperFieldBuilder2), named(__MapperFieldBuilder3),
+        named(__MapperFieldBuilder4), named(__MapperFieldBuilder5), named(__MapperFieldBuilder6), named(__MapperFieldBuilder7),
+        named(__MapperFieldBuilder8), named(__MapperFieldBuilder9), named(__MapperFieldBuilder10), named(__MapperFieldBuilder11),
+        named(__MapperFieldBuilder12), named(__MapperFieldBuilder13), named(__MapperFieldBuilder14), named(__MapperFieldBuilder15),
+        named(__MapperFieldBuilder16), named(__MapperFieldBuilder17), named(__MapperFieldBuilder18), named(__MapperFieldBuilder19),
+        named(__MapperFieldBuilder20), named(__MapperFieldBuilder21), named(__MapperFieldBuilder22), named(__MapperFieldBuilder23),
+        named(__MapperFieldBuilder24), named(__MapperFieldBuilder25), named(__MapperFieldBuilder26), named(__MapperFieldBuilder27),
+        named(__MapperFieldBuilder28), named(__MapperFieldBuilder29), named(__MapperFieldBuilder30), named(__MapperFieldBuilder31)
+)
 public macro Mapper() = #externalMacro(module: "SwiftMapperMacros", type: "MapperMacro")
 
 /// Marks the initializer that `@Mapper` should treat as canonical when the

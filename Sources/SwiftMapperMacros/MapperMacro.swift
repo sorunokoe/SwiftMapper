@@ -158,14 +158,27 @@ public struct MapperMacro: MemberMacro {
             return []
         }
 
-        // All three generated members are built as real, already-typed
+        guard fields.count <= keywordFieldBuilderMaxFieldCount else {
+            context.diagnose(
+                MapperDiagnostic.tooManyFieldsForKeywordInit(
+                    fieldCount: fields.count,
+                    maxFieldCount: keywordFieldBuilderMaxFieldCount
+                )
+                .diagnose(at: canonicalInit)
+            )
+            return []
+        }
+
+        // All generated members are built as real, already-typed
         // `SwiftSyntax` nodes end-to-end — never through
         // `DeclSyntax(stringLiteral:)`/string interpolation — so expanding
         // `@Mapper` never re-parses source text, no matter how many fields
         // or how complex their types are. See `makeBuilderInit`/
-        // `makeKeywordInit`/`makeBuilderEnum` below.
+        // `keywordFieldBuilderTypealiasDecls`/`makeKeywordInit`/
+        // `makeBuilderEnum` below.
         return [
             DeclSyntax(makeBuilderInit(target: target, fields: fields)),
+        ] + keywordFieldBuilderTypealiasDecls(for: fields) + [
             DeclSyntax(makeKeywordInit(target: target, fields: fields)),
             DeclSyntax(makeBuilderEnum(target: target, fields: fields)),
         ]
@@ -221,8 +234,8 @@ private func makeBuilderInit(target: MapperTarget, fields: [MapperField]) -> Ini
 /// init` for classes, plain `init` for structs — entirely out of typed
 /// `SwiftSyntax` nodes. Unlike `makeBuilderInit`'s single `@Builder`
 /// closure, this initializer takes one ordinary, independently labeled
-/// `() -> T` closure per field (same labels, order, and types as the
-/// canonical initializer), so callers can write:
+/// closure per field (same labels, order, and types as the canonical
+/// initializer), so callers can write:
 ///
 /// ```swift
 /// Address(
@@ -232,13 +245,17 @@ private func makeBuilderInit(target: MapperTarget, fields: [MapperField]) -> Ini
 /// )
 /// ```
 ///
-/// instead of opening the `Builder`-DSL block. Each field is an ordinary,
-/// independently type-checked argument — there's no shared result-builder
-/// closure to resolve them jointly — so a `Rule`'s own ergonomic
-/// "no-`.execute()`" sugar (`Boxed`'s `callAsFunction(_:)` overloads) does
-/// not extend here: a field built from a `Rule` needs an explicit
-/// `.execute()`, exactly like any other `Rule` invocation outside a builder
-/// field (see `Boxed`'s "Outside a builder field" note).
+/// instead of opening the `Builder`-DSL block. Each field's closure is
+/// marked `@RuleBuilder<FieldType>` (via a private, per-field typealias —
+/// see `keywordFieldBuilderTypealiasDecls` — since an attribute can't carry
+/// explicit generic arguments directly), so a field built from a `Rule`
+/// needs no `.execute()` here either: `RuleBuilder`'s own
+/// `buildExpression` overloads resolve a plain value or a child `Rule`
+/// independently for *this one field's* closure, the same one-level
+/// resolution `Rule.body` already gets. Each field is still an
+/// independently type-checked argument — result-builder resolution is
+/// purely per-closure, so there's no combinatorial blow-up across fields
+/// no matter how many of them mix plain values and rules.
 private func makeKeywordInit(target: MapperTarget, fields: [MapperField]) -> InitializerDeclSyntax {
     var modifiers = target.modifiers.mirroredForGeneratedMembers
     if target.isClass {
@@ -259,15 +276,90 @@ private func makeKeywordInit(target: MapperTarget, fields: [MapperField]) -> Ini
     )
 }
 
+/// The fixed number of `__MapperFieldBuilderN` typealiases `@Mapper`
+/// declares as its own `@attached(member, names: ...)` member names (see
+/// `Mapper.swift`) — and therefore the hard upper bound on how many fields
+/// the generated keyword initializer can cover. Deliberately generous
+/// (comfortably above any real-world initializer's field count) without
+/// being unbounded.
+///
+/// This is a **fixed, statically-named** list rather than
+/// `names: arbitrary` on purpose: attaching a member macro with
+/// `names: arbitrary` to a type that also declares its own hand-written
+/// operator (`==`, `<`, etc. — e.g. a hand-rolled `Equatable`/`Comparable`
+/// conformance) can trip a known Swift compiler bug
+/// (https://github.com/swiftlang/swift/issues/70087) where the compiler
+/// reports the hand-written operator as colliding with itself
+/// ("multiple matching functions named '=='"), even though the macro never
+/// actually generates that operator. Declaring a fixed, explicitly-named
+/// set of possible members up front avoids `arbitrary` (and that bug)
+/// entirely, at the cost of a hard cap on field count.
+private let keywordFieldBuilderMaxFieldCount = 32
+
+/// The private, per-position name used both by
+/// `keywordFieldBuilderTypealiasDecls` (declaring
+/// `typealias __MapperFieldBuilderN = RuleBuilder<FieldType>`) and
+/// `keywordParameterList` (attaching `@__MapperFieldBuilderN` to that
+/// field's closure parameter). Named by the field's *position* in the
+/// canonical initializer's parameter list, not by its label — the macro
+/// declares a fixed set of `__MapperFieldBuilder0 ... __MapperFieldBuilderN`
+/// names up front (see `keywordFieldBuilderMaxFieldCount`), so the name a
+/// given field gets must be predictable purely from its index, not from
+/// text that's only known once the macro actually expands.
+private func keywordFieldBuilderTypealiasName(at index: Int) -> String {
+    "__MapperFieldBuilder\(index)"
+}
+
+/// One `private typealias __MapperFieldBuilderN = RuleBuilder<FieldType>`
+/// per field (named by position — see `keywordFieldBuilderTypealiasName`) —
+/// a generic `@resultBuilder` type can't be referenced with explicit
+/// generic arguments directly in attribute position (Swift doesn't allow
+/// `@RuleBuilder<String>`), so each field gets its own concrete,
+/// non-generic alias to attach as `@__MapperFieldBuilderN` instead.
+/// `private` regardless of the type's own access level: these aliases are
+/// pure internal plumbing for the keyword initializer's own parameter
+/// attributes, never meant to be referenced from outside the type.
+private func keywordFieldBuilderTypealiasDecls(for fields: [MapperField]) -> [DeclSyntax] {
+    fields.enumerated().map { index, field in
+        DeclSyntax(
+            TypeAliasDeclSyntax(
+                modifiers: DeclModifierListSyntax {
+                    DeclModifierSyntax(name: .keyword(.private))
+                },
+                name: .identifier(keywordFieldBuilderTypealiasName(at: index)),
+                initializer: TypeInitializerClauseSyntax(
+                    value: IdentifierTypeSyntax(
+                        name: .identifier("RuleBuilder"),
+                        genericArgumentClause: GenericArgumentClauseSyntax(
+                            arguments: GenericArgumentListSyntax {
+                                GenericArgumentSyntax(argument: .type(field.boxedType))
+                            }
+                        )
+                    )
+                )
+            )
+        )
+    }
+}
+
 /// The keyword initializer's own parameter list, e.g.
-/// `street: () -> String, city: () -> String` — one plain, independently
-/// labeled closure per field, each on its own line (matching the builder
-/// initializer's layout).
+/// `@__MapperFieldBuilder0 street: () -> String` — one closure per field,
+/// each on its own line (matching the builder initializer's layout),
+/// marked with its own per-position `RuleBuilder` typealias so a plain
+/// value or a child `Rule` both resolve with no `.execute()`.
 private func keywordParameterList(for fields: [MapperField]) -> FunctionParameterListSyntax {
     FunctionParameterListSyntax(
         fields.enumerated().map { index, field in
             let isLast = index == fields.count - 1
             return FunctionParameterSyntax(
+                attributes: AttributeListSyntax {
+                    AttributeSyntax(
+                        attributeName: IdentifierTypeSyntax(
+                            name: .identifier(keywordFieldBuilderTypealiasName(at: index))
+                        ),
+                        trailingTrivia: .space
+                    )
+                },
                 firstName: .identifier(field.label),
                 colon: .colonToken(),
                 type: FunctionTypeSyntax(
@@ -884,6 +976,12 @@ private enum MapperDiagnostic: DiagnosticMessage {
     case unlabeledParameter
     case noFields
     case existingBuilderMemberCollision
+    /// The canonical initializer has more fields than the keyword
+    /// initializer's fixed set of statically-named `__MapperFieldBuilderN`
+    /// typealiases can cover — see `keywordFieldBuilderMaxFieldCount`'s doc
+    /// comment for why that set is a fixed, finite, explicitly-named list
+    /// instead of `names: arbitrary`.
+    case tooManyFieldsForKeywordInit(fieldCount: Int, maxFieldCount: Int)
     /// Two initializer parameters capitalize to the same generated builder
     /// closure parameter name (e.g. `value` and `Value`), which would
     /// otherwise silently produce an invalid, duplicate-named parameter in
@@ -923,6 +1021,12 @@ private enum MapperDiagnostic: DiagnosticMessage {
             declares its own member named 'Builder'. Rename that member, or don't apply @Mapper to \
             this type.
             """
+        case let .tooManyFieldsForKeywordInit(fieldCount, maxFieldCount):
+            return """
+            @Mapper's generated keyword initializer supports at most \(maxFieldCount) fields, but this \
+            initializer declares \(fieldCount). Reduce the number of fields, or use the generated \
+            Builder-DSL initializer instead, which has no such limit.
+            """
         }
     }
 
@@ -938,6 +1042,7 @@ private enum MapperDiagnostic: DiagnosticMessage {
         case .noFields: id = "noFields"
         case .existingBuilderMemberCollision: id = "existingBuilderMemberCollision"
         case .collidingCapitalizedFieldLabels: id = "collidingCapitalizedFieldLabels"
+        case .tooManyFieldsForKeywordInit: id = "tooManyFieldsForKeywordInit"
         }
         return MessageID(domain: "SwiftMapper", id: id)
     }
@@ -946,7 +1051,7 @@ private enum MapperDiagnostic: DiagnosticMessage {
         switch self {
         case .notAStructOrClass, .missingInitializer, .multipleInitializers, .multipleCanonicalInitializers,
              .unsupportedParameter, .unlabeledParameter, .noFields, .existingBuilderMemberCollision,
-             .collidingCapitalizedFieldLabels:
+             .collidingCapitalizedFieldLabels, .tooManyFieldsForKeywordInit:
             return .error
         }
     }
