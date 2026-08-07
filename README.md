@@ -95,7 +95,8 @@ and add `SwiftMapper` to any target that needs it:
 2. Attach `@Mapper` to the struct.
 3. Call the new builder initializer with one labeled closure per parameter
    (Xcode autocompletes the labels from your initializer's own parameter
-   names, capitalized).
+   names, capitalized) — or call the new keyword initializer with one
+   ordinary, flat `label: { ... }` argument per field instead.
 
 ```swift
 import SwiftMapper
@@ -118,7 +119,25 @@ let address = Address { Street, City, PostalCode in
     City { rawInput.city.capitalized }
     PostalCode { rawInput.zip.trimmed() }
 }
+
+// Equivalent, using the flatter keyword initializer instead:
+let sameAddress = Address(
+    street: { rawInput.line1 },
+    city: { rawInput.city.capitalized },
+    postalCode: { rawInput.zip.trimmed() }
+)
 ```
+
+Both initializers are always generated together, and neither replaces the
+other — use whichever reads best at a call site. The one place they
+genuinely differ is composing a field from a `Rule` (see
+[Composing field logic with `Rule`](#composing-field-logic-with-rule)): the
+`Builder`-DSL closure needs no `.execute()` (`Street { SomeRule(input: x) }`),
+while the keyword initializer does (`street: { SomeRule(input: x).execute() }`)
+— each `Builder`-DSL field is its own independent statement, so `Boxed` can
+resolve a plain value vs. a `Rule` per field, but the keyword initializer's
+fields are ordinary arguments in one shared call, which Swift resolves as a
+single overload rather than per-argument.
 
 Structs nest naturally — a nested `@Mapper` struct's builder initializer can
 be called from inside an outer struct's builder closure, the same way you'd
@@ -146,7 +165,7 @@ See [Diagnostics](#diagnostics) for what happens when these aren't met.
 ## How it works
 
 `@Mapper` is a Swift **member macro**. It reads your one initializer and
-adds two members: a second, additive initializer, and a matching
+adds three members: two additive initializers, and a matching
 `@resultBuilder` enum.
 
 ```swift
@@ -161,6 +180,14 @@ extension Address {
     ) {
         let (street, city, postalCode) = creation(.init(), .init(), .init())
         self.init(street: street, city: city, postalCode: postalCode)
+    }
+
+    init(
+        street: () -> String,
+        city: () -> String,
+        postalCode: () -> String
+    ) {
+        self.init(street: street(), city: city(), postalCode: postalCode())
     }
 
     @resultBuilder
@@ -190,8 +217,11 @@ The `buildEither` overloads (plus the single-field `buildBlock`) are what let
 
 `Boxed<T>` (shipped in the `SwiftMapper` library) just gives each closure
 parameter a readable name via `callAsFunction`, so `Street { ... }` reads
-like a keyword but is an ordinary function call. Your existing initializer
-is left untouched — the builder initializer is purely additive.
+like a keyword but is an ordinary function call. The keyword initializer
+needs no such helper type — its fields are already ordinary, independently
+labeled closures, delegating straight to your canonical initializer just
+like the `Builder`-DSL one does. Your existing initializer is left
+untouched — both generated initializers are purely additive.
 
 ## Non-goals
 

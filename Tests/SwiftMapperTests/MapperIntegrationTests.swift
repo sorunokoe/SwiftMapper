@@ -193,6 +193,114 @@ struct MapperIntegrationTests {
         #expect(built == PersonData(firstName: "Grace", lastName: "Hopper", age: 37))
     }
 
+    @Test("Keyword initializer produces the same value as the canonical initializer")
+    func keywordInitMatchesCanonicalInit() {
+        let expected = PersonData(firstName: "Ada", lastName: "Lovelace", age: 36)
+
+        let built = PersonData(
+            firstName: { "Ada" },
+            lastName: { "Lovelace" },
+            age: { 36 }
+        )
+
+        #expect(built == expected)
+    }
+
+    @Test("Keyword initializer's labels must appear in the canonical initializer's declared order, like any Swift call")
+    func keywordInitRequiresDeclarationOrder() {
+        let built = PersonData(
+            firstName: { "Ada" },
+            lastName: { "Lovelace" },
+            age: { 36 }
+        )
+
+        #expect(built == PersonData(firstName: "Ada", lastName: "Lovelace", age: 36))
+    }
+
+    @Test("Keyword initializer closures can run arbitrary mapping logic per field")
+    func keywordInitClosuresRunArbitraryLogic() {
+        let source = (first: "grace", last: "hopper", birthYear: 1906)
+        let currentYear = 1943
+
+        let built = PersonData(
+            firstName: { source.first.capitalized },
+            lastName: { source.last.capitalized },
+            age: { currentYear - source.birthYear }
+        )
+
+        #expect(built == PersonData(firstName: "Grace", lastName: "Hopper", age: 37))
+    }
+
+    @Test("Keyword initializer fields built from a Rule need an explicit .execute(), unlike a Builder-DSL field")
+    func keywordInitFieldFromRuleNeedsExecute() {
+        struct UppercasedRule: Rule {
+            let input: String
+
+            var body: String { input.uppercased() }
+        }
+
+        let built = PersonData(
+            firstName: { UppercasedRule(input: "ada").execute() },
+            lastName: { "Lovelace" },
+            age: { 36 }
+        )
+
+        #expect(built == PersonData(firstName: "ADA", lastName: "Lovelace", age: 36))
+    }
+
+    @Test("Keyword initializer supports an Optional field, including nil")
+    func keywordInitOptionalFieldSupport() {
+        let withNickname = NicknameData(
+            firstName: { "Grace" },
+            nickname: { "Amazing Grace" }
+        )
+        let withoutNickname = NicknameData(
+            firstName: { "Grace" },
+            nickname: { nil }
+        )
+
+        #expect(withNickname == NicknameData(firstName: "Grace", nickname: "Amazing Grace"))
+        #expect(withoutNickname == NicknameData(firstName: "Grace", nickname: nil))
+    }
+
+    @Test("Keyword initializer supports generic structs with a single type parameter")
+    func keywordInitGenericStructSupport() {
+        let built = LabeledValue<Int>(
+            label: { "count" },
+            value: { 3 + 4 }
+        )
+
+        #expect(built == LabeledValue(label: "count", value: 7))
+    }
+
+    @Test("Keyword initializer supports classes via a generated convenience init")
+    func keywordInitClassSupport() {
+        let built = PersonBox(
+            firstName: { "Ada" },
+            lastName: { "Lovelace" }
+        )
+
+        #expect(built == PersonBox(firstName: "Ada", lastName: "Lovelace"))
+    }
+
+    @Test("Keyword and Builder-DSL initializers coexist on the same @Mapper type without conflict")
+    func keywordInitCoexistsWithBuilderInit() {
+        let viaBuilder = PersonData { FirstName, LastName, Age in
+            FirstName { "Ada" }
+            LastName { "Lovelace" }
+            Age { 36 }
+        }
+        let viaKeyword = PersonData(
+            firstName: { "Ada" },
+            lastName: { "Lovelace" },
+            age: { 36 }
+        )
+        let viaCanonical = PersonData(firstName: "Ada", lastName: "Lovelace", age: 36)
+
+        #expect(viaBuilder == viaKeyword)
+        #expect(viaKeyword == viaCanonical)
+    }
+
     @Test("if/else can appear directly inside the builder closure")
     func ifElseBranchingInsideBuilderClosure() {
         func build(isSenior: Bool) -> PersonData {

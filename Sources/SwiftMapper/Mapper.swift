@@ -15,6 +15,14 @@
 ///   canonical initializer — it never constructs the type directly — so it
 ///   works identically whether the canonical initializer is a struct's
 ///   memberwise-style `init` or a class's designated `init`.
+/// - A third, additive initializer (same `convenience`/plain `init` rule as
+///   above) that mirrors the canonical initializer's own labels, order, and
+///   types exactly, but wraps each field in a plain, independently labeled
+///   `() -> T` closure — an ordinary Swift call, not a block-scoped DSL.
+///   This *keyword initializer* also delegates straight to the canonical
+///   initializer. It's the flatter alternative to the `Builder` closure
+///   above for callers who'd rather not open a block: each field is just
+///   one more labeled argument.
 ///
 /// Given:
 ///
@@ -93,6 +101,34 @@
 /// `if`/`else` and `switch` can appear directly inside that closure — each
 /// branch just needs to produce the same field type. See the generated
 /// `buildEither` functions above.
+///
+/// The generated keyword initializer, meanwhile, lets the same fields be
+/// written as one flat, ordinary call — no block, no capitalized field
+/// names:
+///
+/// ```swift
+/// ProfileHeaderData(
+///     profile: { .init(url: domain.avatarURL) },
+///     fullname: { .loaded(domain.fullName) },
+///     nickname: { domain.playerName }
+/// )
+/// ```
+///
+/// Both initializers are always generated together and neither replaces the
+/// other — pick whichever reads best at a given call site. The one place
+/// they genuinely differ: a field built from a `Rule` needs an explicit
+/// `.execute()` in the keyword initializer (`profile: { SomeRule(input: x).execute() }`),
+/// whereas the same field in the `Builder`-DSL closure needs no `.execute()`
+/// at all (`Profile { SomeRule(input: x) }`) — `Boxed`'s `callAsFunction`
+/// overloads resolve that automatically. This isn't a limitation specific
+/// to `@Mapper`: each `Builder`-DSL field is its own independent statement,
+/// so Swift can resolve `Boxed`'s two `callAsFunction` overloads (plain
+/// value vs. `Rule`) separately per field. The keyword initializer's fields
+/// are ordinary arguments in one shared call instead, and Swift resolves an
+/// overloaded function's entire argument list as a single unit — so a
+/// single `() -> T` parameter type can't *also* accept an un-executed
+/// `Rule` without either combinatorial overloads or requiring arbitrary
+/// value types to conform to `Rule`, neither of which `@Mapper` does.
 ///
 /// ## Requirements (v1)
 ///

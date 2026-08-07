@@ -158,14 +158,15 @@ public struct MapperMacro: MemberMacro {
             return []
         }
 
-        // Both generated members are built as real, already-typed
+        // All three generated members are built as real, already-typed
         // `SwiftSyntax` nodes end-to-end — never through
         // `DeclSyntax(stringLiteral:)`/string interpolation — so expanding
         // `@Mapper` never re-parses source text, no matter how many fields
         // or how complex their types are. See `makeBuilderInit`/
-        // `makeBuilderEnum` below.
+        // `makeKeywordInit`/`makeBuilderEnum` below.
         return [
             DeclSyntax(makeBuilderInit(target: target, fields: fields)),
+            DeclSyntax(makeKeywordInit(target: target, fields: fields)),
             DeclSyntax(makeBuilderEnum(target: target, fields: fields)),
         ]
     }
@@ -213,6 +214,98 @@ private func makeBuilderInit(target: MapperTarget, fields: [MapperField]) -> Ini
             creationBindingDecl(for: fields)
             delegatingSelfInitCallExpr(for: fields)
         }
+    )
+}
+
+/// Builds the generated flat, labeled "keyword" initializer — `convenience
+/// init` for classes, plain `init` for structs — entirely out of typed
+/// `SwiftSyntax` nodes. Unlike `makeBuilderInit`'s single `@Builder`
+/// closure, this initializer takes one ordinary, independently labeled
+/// `() -> T` closure per field (same labels, order, and types as the
+/// canonical initializer), so callers can write:
+///
+/// ```swift
+/// Address(
+///     street: { rawInput.line1 },
+///     city: { rawInput.city.capitalized },
+///     postalCode: { rawInput.zip.trimmed() }
+/// )
+/// ```
+///
+/// instead of opening the `Builder`-DSL block. Each field is an ordinary,
+/// independently type-checked argument — there's no shared result-builder
+/// closure to resolve them jointly — so a `Rule`'s own ergonomic
+/// "no-`.execute()`" sugar (`Boxed`'s `callAsFunction(_:)` overloads) does
+/// not extend here: a field built from a `Rule` needs an explicit
+/// `.execute()`, exactly like any other `Rule` invocation outside a builder
+/// field (see `Boxed`'s "Outside a builder field" note).
+private func makeKeywordInit(target: MapperTarget, fields: [MapperField]) -> InitializerDeclSyntax {
+    var modifiers = target.modifiers.mirroredForGeneratedMembers
+    if target.isClass {
+        modifiers = modifiers + [DeclModifierSyntax(name: .keyword(.convenience))]
+    }
+
+    return InitializerDeclSyntax(
+        modifiers: modifiers,
+        signature: FunctionSignatureSyntax(
+            parameterClause: FunctionParameterClauseSyntax(
+                leftParen: .leftParenToken(trailingTrivia: .newline),
+                parameters: keywordParameterList(for: fields)
+            )
+        ),
+        body: CodeBlockSyntax {
+            keywordDelegatingSelfInitCallExpr(for: fields)
+        }
+    )
+}
+
+/// The keyword initializer's own parameter list, e.g.
+/// `street: () -> String, city: () -> String` — one plain, independently
+/// labeled closure per field, each on its own line (matching the builder
+/// initializer's layout).
+private func keywordParameterList(for fields: [MapperField]) -> FunctionParameterListSyntax {
+    FunctionParameterListSyntax(
+        fields.enumerated().map { index, field in
+            let isLast = index == fields.count - 1
+            return FunctionParameterSyntax(
+                firstName: .identifier(field.label),
+                colon: .colonToken(),
+                type: FunctionTypeSyntax(
+                    parameters: TupleTypeElementListSyntax { },
+                    returnClause: ReturnClauseSyntax(type: field.boxedType)
+                ),
+                trailingComma: isLast ? nil : .commaToken(),
+                trailingTrivia: .newline
+            )
+        }
+    )
+}
+
+/// `self.init(street: street(), city: city())` — the delegating call that
+/// invokes each keyword closure and forwards its result to the canonical
+/// initializer.
+private func keywordDelegatingSelfInitCallExpr(for fields: [MapperField]) -> FunctionCallExprSyntax {
+    FunctionCallExprSyntax(
+        calledExpression: MemberAccessExprSyntax(
+            base: DeclReferenceExprSyntax(baseName: .keyword(.`self`)),
+            declName: DeclReferenceExprSyntax(baseName: .keyword(.`init`))
+        ),
+        leftParen: .leftParenToken(),
+        arguments: LabeledExprListSyntax {
+            for field in fields {
+                LabeledExprSyntax(
+                    label: .identifier(field.label),
+                    colon: .colonToken(),
+                    expression: FunctionCallExprSyntax(
+                        calledExpression: DeclReferenceExprSyntax(baseName: .identifier(field.label)),
+                        leftParen: .leftParenToken(),
+                        arguments: [],
+                        rightParen: .rightParenToken()
+                    )
+                )
+            }
+        },
+        rightParen: .rightParenToken()
     )
 }
 

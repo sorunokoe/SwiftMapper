@@ -49,6 +49,13 @@ final class MapperMacroExpansionTests: XCTestCase {
                     self.init(profile: profile, fullname: fullname)
                 }
 
+                public init(
+                    profile: () -> String,
+                    fullname: () -> String
+                ) {
+                    self.init(profile: profile(), fullname: fullname())
+                }
+
                 @resultBuilder
                 public enum Builder {
                     public static func buildBlock(_ profile: String, _ fullname: String) -> (String, String) {
@@ -103,6 +110,12 @@ final class MapperMacroExpansionTests: XCTestCase {
                     self.init(text: text)
                 }
 
+                init(
+                    text: () -> String
+                ) {
+                    self.init(text: text())
+                }
+
                 @resultBuilder
                 enum Builder {
                     static func buildBlock(_ text: String) -> String {
@@ -155,6 +168,12 @@ final class MapperMacroExpansionTests: XCTestCase {
                 ) {
                     let render = creation(.init())
                     self.init(render: render)
+                }
+
+                init(
+                    render: () -> @MainActor () -> Int
+                ) {
+                    self.init(render: render())
                 }
 
                 @resultBuilder
@@ -252,6 +271,13 @@ final class MapperMacroExpansionTests: XCTestCase {
                     self.init(id: id, name: name)
                 }
 
+                init(
+                    id: () -> String,
+                    name: () -> String
+                ) {
+                    self.init(id: id(), name: name())
+                }
+
                 @resultBuilder
                 enum Builder {
                     static func buildBlock(_ id: String, _ name: String) -> (String, String) {
@@ -320,6 +346,12 @@ final class MapperMacroExpansionTests: XCTestCase {
                 ) {
                     let value = creation(.init())
                     self.init(value: value)
+                }
+
+                init(
+                    value: () -> String
+                ) {
+                    self.init(value: value())
                 }
 
                 @resultBuilder
@@ -562,6 +594,13 @@ final class MapperMacroExpansionTests: XCTestCase {
                     self.init(id: id, name: name)
                 }
 
+                init(
+                    id: () -> String,
+                    name: () -> String
+                ) {
+                    self.init(id: id(), name: name())
+                }
+
                 @resultBuilder
                 enum Builder {
                     static func buildBlock(_ id: String, _ name: String) -> (String, String) {
@@ -642,6 +681,13 @@ final class MapperMacroExpansionTests: XCTestCase {
                 ) {
                     let (id, name) = creation(.init(), .init())
                     self.init(id: id, name: name)
+                }
+
+                init(
+                    id: () -> String,
+                    name: () -> String
+                ) {
+                    self.init(id: id(), name: name())
                 }
 
                 @resultBuilder
@@ -736,6 +782,13 @@ final class MapperMacroExpansionTests: XCTestCase {
                 ) {
                     let (label, value) = creation(.init(), .init())
                     self.init(label: label, value: value)
+                }
+
+                init(
+                    label: () -> String,
+                    value: () -> Value
+                ) {
+                    self.init(label: label(), value: value())
                 }
 
                 @resultBuilder
@@ -842,6 +895,12 @@ final class MapperMacroExpansionTests: XCTestCase {
                     self.init(text: text)
                 }
 
+                convenience init(
+                    text: () -> String
+                ) {
+                    self.init(text: text())
+                }
+
                 @resultBuilder
                 enum Builder {
                     static func buildBlock(_ text: String) -> String {
@@ -900,6 +959,12 @@ final class MapperMacroExpansionTests: XCTestCase {
                 ) {
                     let text = creation(.init())
                     self.init(text: text)
+                }
+
+                public convenience init(
+                    text: () -> String
+                ) {
+                    self.init(text: text())
                 }
 
                 @resultBuilder

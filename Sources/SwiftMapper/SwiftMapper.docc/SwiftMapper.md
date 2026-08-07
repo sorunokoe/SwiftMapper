@@ -33,6 +33,13 @@ let header = ProfileHeaderData {
     Fullname { domainUser.displayName }
     Nickname { domainUser.nickname ?? domainUser.displayName }
 }
+
+// Equivalent, flatter alternative — no block, one ordinary argument per field:
+let sameHeader = ProfileHeaderData(
+    profile: { domainUser.avatar },
+    fullname: { domainUser.displayName },
+    nickname: { domainUser.nickname ?? domainUser.displayName }
+)
 ```
 
 SwiftMapper deliberately stays a *third path* between a flat initializer call
