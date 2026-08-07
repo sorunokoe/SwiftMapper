@@ -100,6 +100,48 @@ direction. See [docs/GUIDE.md](docs/GUIDE.md) for chaining rules,
 branching (`if`/`switch` inside a builder), multiple initializers,
 collection fields, and the full diagnostics list.
 
+## More examples
+
+**Branching** — `if`/`else` and `switch` work directly inside a builder
+closure, as long as every branch produces the same field type:
+
+```swift
+Handicap { Trend in
+    switch domain.trend {
+    case .up: Trend { .up }
+    case .down: Trend { .down }
+    case .none: Trend { .flat }
+    }
+}
+```
+
+**Collections** — map a source collection element-by-element, labeled
+instead of a bare `.map`:
+
+```swift
+Items(mapping: domain.items) { domainItem in
+    domainItem.name.capitalized
+}
+```
+
+**Multiple initializers** — `@Mapper` auto-detects the memberwise-shaped
+initializer; mark another explicitly with `@MapperCanonical` when that's
+ambiguous (e.g. alongside a hand-written `Decodable.init(from:)`):
+
+```swift
+@Mapper
+struct User: Decodable {
+    let id: UUID
+    let name: String
+
+    init(id: UUID, name: String) { self.id = id; self.name = name } // auto-detected
+    init(from decoder: Decoder) throws { /* ... */ }                 // not a candidate
+}
+```
+
+More in [docs/GUIDE.md](docs/GUIDE.md) — rule chaining, diagnostics, and
+class support.
+
 ## Non-goals
 
 - Not a generic `Mapper<Input, Output>` combinator library.
