@@ -5,6 +5,12 @@
 [![Platform compatibility](https://img.shields.io/endpoint?url=https%3A%2F%2Fswiftpackageindex.com%2Fapi%2Fpackages%2Fsorunokoe%2FSwiftMapper%2Fbadge%3Ftype%3Dplatforms)](https://swiftpackageindex.com/sorunokoe/SwiftMapper)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
+```
+"You’re not really writing precise instructions to solve the problem;
+It’s more like you’re describing the problem in the language, 
+and then it goes and solves it for you."
+```
+
 A small Swift library for writing data mappers that read like a DSL and
 type-check at compile time — no runtime combinator library, no
 hand-written `@resultBuilder` per type.
